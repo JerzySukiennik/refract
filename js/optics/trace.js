@@ -36,6 +36,7 @@ export const TRACE_DEFAULTS = {
   shapeBlend: PRISM_DEFAULTS.shapeBlend,
   acceptanceK: 2.0,
   beamHalfWidth: 8,
+  mirrorReflectance: 0.9,
   includeFixed: true,
 };
 
@@ -89,6 +90,7 @@ let sNM = new Float64Array(cap);
 let sI = new Float64Array(cap);
 let sGen = new Int32Array(cap);
 let sIn = new Int32Array(cap);
+let sPerp = new Int32Array(cap);
 let sp = 0;
 
 // --- per-cast scratch ----------------------------------------------------------------
@@ -161,6 +163,7 @@ function growStack() {
   const f = new Float64Array(s); f.set(sI); sI = f;
   const g = new Int32Array(s); g.set(sGen); sGen = g;
   const h = new Int32Array(s); h.set(sIn); sIn = h;
+  const p = new Int32Array(s); p.set(sPerp); sPerp = p;
   cap = s;
 }
 
@@ -343,7 +346,7 @@ function cast(ox, oy, dx, dy, inside) {
   }
 }
 
-function push(ox, oy, dx, dy, nm, intensity, gen, inside, minIntensity) {
+function push(ox, oy, dx, dy, nm, intensity, gen, inside, perp, minIntensity) {
   if (!(intensity > 0)) return;
   if (intensity < minIntensity) {
     energyPruned += intensity;
@@ -358,6 +361,7 @@ function push(ox, oy, dx, dy, nm, intensity, gen, inside, minIntensity) {
   sI[sp] = intensity;
   sGen[sp] = gen;
   sIn[sp] = inside;
+  sPerp[sp] = perp;
   sp++;
   rayCount++;
 }
@@ -383,6 +387,7 @@ export function traceScene(level, optics, opts) {
   const useFresnel = o.fresnelReflections;
   const acceptK = o.acceptanceK;
   const halfW = o.beamHalfWidth;
+  const mirrorR = o.mirrorReflectance;
   const iors = sampleIORs(samples, o);
   const whiteIOR = prismIOR(550, o.baseIOR, o.spread, o.glass, o.shapeBlend);
 
@@ -398,7 +403,9 @@ export function traceScene(level, optics, opts) {
     const e = emitters[i];
     const amp = e.intensity === undefined ? 1 : e.intensity;
     energyIn += amp;
-    push(e.x, e.y, Math.cos(e.dir), Math.sin(e.dir), 0, amp, 0, -1, 0);
+    // The transverse frame starts right-handed: +1 means the warm shoulder lies on the
+    // +n side of the ray, with n = (-dy, dx). REFERENCE.md 4.2.
+    push(e.x, e.y, Math.cos(e.dir), Math.sin(e.dir), 0, amp, 0, -1, 1, 0);
   }
 
   let truncated = false;
@@ -417,11 +424,12 @@ export function traceScene(level, optics, opts) {
     const intensity = sI[sp];
     const gen = sGen[sp];
     const inside = sIn[sp];
+    const perp = sPerp[sp];
 
     cast(ox, oy, dx, dy, inside);
 
     if (hitKind === KIND_NONE) {
-      segments.push(seg(ox, oy, ox + dx * FAR, oy + dy * FAR, nm, intensity, gen, 'escape', inside >= 0));
+      segments.push(seg(ox, oy, ox + dx * FAR, oy + dy * FAR, nm, intensity, gen, 'escape', inside >= 0, perp));
       if (recCount > 0 && inside < 0) measure(level, ox, oy, dx, dy, FAR, nm, intensity, acceptK, halfW);
       energyTerminated += intensity;
       continue;
@@ -434,14 +442,14 @@ export function traceScene(level, optics, opts) {
     }
 
     if (hitKind === KIND_WALL) {
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'wall', inside >= 0));
+      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'wall', inside >= 0, perp));
       energyTerminated += intensity;
       continue;
     }
 
     if (hitKind === KIND_RECEPTOR) {
       const id = receptorId(level, hitIdx);
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'receptor:' + id, false));
+      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'receptor:' + id, false, perp));
       energyTerminated += intensity;
       collect(hitIdx, level, nm, intensity, (recX[hitIdx] - ox) * dy - (recY[hitIdx] - oy) * dx, acceptK, halfW);
       continue;
@@ -451,7 +459,7 @@ export function traceScene(level, optics, opts) {
 
     if (hitKind === KIND_MIRROR) {
       if (!canContinue) {
-        segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'depth', false));
+        segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'depth', false, perp));
         energyTerminated += intensity;
         continue;
       }
@@ -461,15 +469,19 @@ export function traceScene(level, optics, opts) {
         nx = -nx;
         ny = -ny;
       }
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, false));
+      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, false, perp));
       reflectInto(vec2, dx, dy, nx, ny);
-      push(hx + nx * SURFACE_OFFSET, hy + ny * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity, gen + 1, -1, minI);
+      // A reflection mirrors the ray's transverse frame, so the warm and cool shoulders
+      // trade sides. The 10 % the mirror does not return is absorbed here.
+      const kept = intensity * mirrorR;
+      energyTerminated += intensity - kept;
+      push(hx + nx * SURFACE_OFFSET, hy + ny * SURFACE_OFFSET, vec2[0], vec2[1], nm, kept, gen + 1, -1, -perp, minI);
       continue;
     }
 
     // KIND_PRISM
     if (!canContinue) {
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'depth', inside >= 0));
+      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'depth', inside >= 0, perp));
       energyTerminated += intensity;
       continue;
     }
@@ -488,11 +500,11 @@ export function traceScene(level, optics, opts) {
       const cosI = -(dx * fx + dy * fy);
       const nGlass = nm ? prismIOR(nm, o.baseIOR, o.spread, o.glass, o.shapeBlend) : whiteIOR;
       const R = useFresnel ? fresnel(cosI, 1, nGlass) : 0;
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, false));
+      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, false, perp));
 
       if (R > 0) {
         reflectInto(vec2, dx, dy, fx, fy);
-        push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity * R, gen + 1, -1, minI);
+        push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity * R, gen + 1, -1, -perp, minI);
       }
 
       const T = intensity * (1 - R);
@@ -503,19 +515,19 @@ export function traceScene(level, optics, opts) {
             const w = samples[k];
             const nk = iors[k];
             if (refractInto(vec2, dx, dy, fx, fy, 1 / nk)) {
-              push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], w, share, gen + 1, hitIdx, minI);
+              push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], w, share, gen + 1, hitIdx, perp, minI);
             } else {
               reflectInto(vec2, dx, dy, fx, fy);
-              push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], w, share, gen + 1, -1, minI);
+              push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], w, share, gen + 1, -1, -perp, minI);
             }
           }
         } else {
           const nk = nGlass;
           if (refractInto(vec2, dx, dy, fx, fy, 1 / nk)) {
-            push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, hitIdx, minI);
+            push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, hitIdx, perp, minI);
           } else {
             reflectInto(vec2, dx, dy, fx, fy);
-            push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, -1, minI);
+            push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, -1, -perp, minI);
           }
         }
       }
@@ -523,7 +535,7 @@ export function traceScene(level, optics, opts) {
     }
 
     // Leaving the glass (or total internal reflection).
-    segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, true));
+    segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, true, perp));
     const nGlass = nm ? prismIOR(nm, o.baseIOR, o.spread, o.glass, o.shapeBlend) : whiteIOR;
     let fx = nOutX;
     let fy = nOutY;
@@ -536,15 +548,15 @@ export function traceScene(level, optics, opts) {
       const R = useFresnel ? fresnel(cosI, nGlass, 1) : 0;
       const T = intensity * (1 - R);
       if (T > 0) {
-        push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, -1, minI);
+        push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, -1, perp, minI);
       }
       if (R > 0) {
         reflectInto(vec2, dx, dy, fx, fy);
-        push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity * R, gen + 1, hitIdx, minI);
+        push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity * R, gen + 1, hitIdx, -perp, minI);
       }
     } else {
       reflectInto(vec2, dx, dy, fx, fy);
-      push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity, gen + 1, hitIdx, minI);
+      push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity, gen + 1, hitIdx, -perp, minI);
     }
   }
 
@@ -642,6 +654,6 @@ function receptorId(level, i) {
   return r.id === undefined ? 'r' + i : r.id;
 }
 
-function seg(ax, ay, bx, by, nm, intensity, generation, terminal, inside) {
-  return { ax, ay, bx, by, nm, intensity, generation, terminal, inside };
+function seg(ax, ay, bx, by, nm, intensity, generation, terminal, inside, perp) {
+  return { ax, ay, bx, by, nm, intensity, generation, terminal, inside, perp };
 }

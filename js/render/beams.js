@@ -2,28 +2,44 @@
 // capsule quad, shaded in linear HDR with a flat-top core, handed warm/cool fringe,
 // animated longitudinal grain and round end caps.
 
-import { createProgram } from './gl.js';
+import { createProgram, getTransform } from './gl.js';
 import { nmToLinearRGB } from '../optics/spectrum.js';
 
 const FLOATS_PER_INSTANCE = 12;
 const INSTANCE_STRIDE = FLOATS_PER_INSTANCE * 4;
 
+// Everything the reference measured is in pixels of a 720x694 frame whose board->pixel
+// scale is 0.568 px per board unit (REFERENCE.md 1.1). Board units are the renderer's
+// working space, so each measured pixel figure is divided by a scale here rather than
+// baked in: the beam keeps the reference's proportions at any canvas size, and on a board
+// drawn smaller than the reference the fringe is held at its measured 2.6 px so it cannot
+// dissolve below one pixel.
+const REFERENCE_SCALE = 0.568;
+const FRINGE_OFFSET_PX = 2.6;   // REFERENCE.md 4.2: R shifted +2.6 px, B shifted -2.6 px
+const PROFILE_EDGE_PX = 26.0;   // REFERENCE.md 4.1: v = 1 sits 26 px off the centreline
+
 const DEFAULTS = {
-  whiteGain: 1.9,
-  whiteHalfWidth: 44.0,
+  whiteGain: 1.15,
+  whiteHalfWidth: PROFILE_EDGE_PX / REFERENCE_SCALE,
   spectralGain: 1.15,
   spectralHalfWidth: 16.0,
   spectralGrow: 0.006,
   spectralCompRef: 520.0,
   spectralCompMax: 3.2,
-  fringeOffset: 4.6,
+  fringeOffsetPx: FRINGE_OFFSET_PX,
   fringeChroma: 1.3,
   grainAmount: 0.133,
   grainDrift: 26.0,
   hotRadius: 22.0,
   hotGain: 0.55,
-  falloff: 0.00002,
 };
+
+// Board units for a distance the reference measured in pixels.
+function unitsFromPx(px) {
+  const t = getTransform();
+  const scale = t && t.scale > 0 ? Math.min(t.scale, REFERENCE_SCALE) : REFERENCE_SCALE;
+  return px / scale;
+}
 
 const VERT = `#version 300 es
 precision highp float;
@@ -113,7 +129,6 @@ uniform float uGrainAmount;
 uniform float uGrainDrift;
 uniform float uHotRadius;
 uniform float uHotGain;
-uniform float uFalloff;
 
 out vec4 outColor;
 
@@ -161,6 +176,9 @@ void main() {
     energy = vColor * (p * uSpecGain * vIntensity * comp);
     coreness = p;
   } else {
+    // vAcross is already signed by the ray's own transverse frame, so shifting R to the
+    // +side and B to the -side puts the amber shoulder wherever the tracer says it goes.
+    // abs() lives inside beamProfile, which is the symmetric part.
     float off = uFringeOffset;
     float dR = capsuleDist(vAlong, vAcross - off, vLen);
     float dG = capsuleDist(vAlong, vAcross, vLen);
@@ -192,7 +210,8 @@ void main() {
   float hot = vHot.x * exp(-dA * dA / hr2) + vHot.y * exp(-dB2 * dB2 / hr2);
   energy *= 1.0 + hot * uHotGain;
 
-  energy *= exp(-uFalloff * axialClamped);
+  // White light does not attenuate with distance (REFERENCE.md 4.4). Per-bounce loss is
+  // the tracer's business and already sits in vIntensity.
 
   if (energy.r + energy.g + energy.b < 1e-4) discard;
 
@@ -247,7 +266,6 @@ export function createBeamRenderer(gl) {
     grainDrift: gl.getUniformLocation(program, 'uGrainDrift'),
     hotRadius: gl.getUniformLocation(program, 'uHotRadius'),
     hotGain: gl.getUniformLocation(program, 'uHotGain'),
-    falloff: gl.getUniformLocation(program, 'uFalloff'),
   };
 
   const params = Object.assign({}, DEFAULTS);
@@ -336,9 +354,11 @@ export function createBeamRenderer(gl) {
         r = c[0]; g = c[1]; b = c[2];
       }
 
-      let fringe;
-      if (typeof s.fringe === 'number') fringe = s.fringe >= 0 ? 1.0 : -1.0;
-      else fringe = ((s.generation | 0) & 1) === 0 ? 1.0 : -1.0;
+      // The handedness is a property of the ray, carried by the tracer. Falling back to
+      // generation parity is only correct for pure mirror chains, so it is a last resort.
+      let perp;
+      if (typeof s.perp === 'number' && s.perp !== 0) perp = s.perp > 0 ? 1.0 : -1.0;
+      else perp = ((s.generation | 0) & 1) === 0 ? 1.0 : -1.0;
 
       data[w] = s.ax;
       data[w + 1] = s.ay;
@@ -349,7 +369,7 @@ export function createBeamRenderer(gl) {
       data[w + 6] = b;
       data[w + 7] = intensity;
       data[w + 8] = spectral;
-      data[w + 9] = fringe;
+      data[w + 9] = perp;
       data[w + 10] = hotStart(s);
       data[w + 11] = hotEnd(s);
       w += FLOATS_PER_INSTANCE;
@@ -388,13 +408,12 @@ export function createBeamRenderer(gl) {
     g.uniform1f(uni.specGain, params.spectralGain);
     g.uniform1f(uni.specCompRef, params.spectralCompRef);
     g.uniform1f(uni.specCompMax, params.spectralCompMax);
-    g.uniform1f(uni.fringeOffset, params.fringeOffset);
+    g.uniform1f(uni.fringeOffset, unitsFromPx(params.fringeOffsetPx));
     g.uniform1f(uni.fringeChroma, params.fringeChroma);
     g.uniform1f(uni.grainAmount, params.grainAmount);
     g.uniform1f(uni.grainDrift, params.grainDrift);
     g.uniform1f(uni.hotRadius, params.hotRadius);
     g.uniform1f(uni.hotGain, params.hotGain);
-    g.uniform1f(uni.falloff, params.falloff);
 
     g.disable(g.DEPTH_TEST);
     g.disable(g.CULL_FACE);

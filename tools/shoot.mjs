@@ -100,10 +100,19 @@ page.on('pageerror', e => consoleErrors.push('PAGEERROR ' + e.message));
 await page.goto(`http://localhost:${PORT}/?capture=1`, { waitUntil: 'networkidle0', timeout: 45000 });
 
 try {
-  await page.waitForFunction('window.REFRACT && window.REFRACT.ready', { timeout: 25000 });
+  // Must coerce to a boolean: waitForFunction awaits whatever the predicate returns, and
+  // REFRACT.ready is a Promise resolving to undefined, which would poll forever.
+  await page.waitForFunction('!!(window.REFRACT && window.REFRACT.ready)', { timeout: 25000 });
   await page.evaluate(() => window.REFRACT.ready);
-} catch {
+} catch (err) {
   console.error('FATAL: window.REFRACT.ready never resolved. The game did not boot.');
+  console.error('cause: ' + (err && err.message ? err.message : String(err)));
+  const probe = await page.evaluate(() => ({
+    hasRefract: !!window.REFRACT,
+    keys: window.REFRACT ? Object.keys(window.REFRACT) : [],
+    readyType: window.REFRACT ? typeof window.REFRACT.ready : 'n/a',
+  })).catch(e => ({ probeFailed: String(e) }));
+  console.error('probe: ' + JSON.stringify(probe));
   console.error(consoleErrors.slice(0, 20).join('\n'));
   await browser.close(); server.close(); process.exit(2);
 }

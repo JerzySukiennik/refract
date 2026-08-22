@@ -32,6 +32,17 @@ import {
   reset,
 } from './state.js';
 
+// Post-process parameters. The grouped form is authoritative; the pipeline's own defaults
+// come from the measurements in docs/REFERENCE.md, so we only state deliberate departures.
+const POST_PARAMS = {
+  exposure: 1.0,
+  bloom: { intensity: 0.62, threshold: 0.72, knee: 0.45, radius: 1.0, steps: 6 },
+  grain: { amount: 0.018 },
+  aberration: { amount: 0.0009 },
+  vignette: { amount: 0.11 },
+};
+
+
 const FIXED_STEP = 1 / 120;
 const MAX_FRAME = 0.25;
 const BURST_RINGS = 3;
@@ -204,7 +215,7 @@ function boot() {
   let board = createBoardRenderer(gl);
   let contextLost = false;
 
-  pipeline.setParams({ bloom: 1.0, grain: 0.02, aberration: 0.15, vignette: 0.12, exposure: 1.0 });
+  pipeline.setParams(POST_PARAMS);
 
   const audioInit = pick(audio, 'initAudio', 'init', 'createAudio', 'setup');
   const audioPlay = pick(audio, 'play', 'playSound', 'trigger');
@@ -315,7 +326,7 @@ function boot() {
     pipeline = createPipeline(gl);
     beams = createBeamRenderer(gl);
     board = createBoardRenderer(gl);
-    pipeline.setParams({ bloom: 1.0, grain: 0.02, aberration: 0.15, vignette: 0.12, exposure: 1.0 });
+    pipeline.setParams(POST_PARAMS);
     contextLost = false;
     runTrace(true);
     beams.upload(state.trace.segments);

@@ -495,7 +495,11 @@ function pickTexture(gl, names) {
     if (typeof fn === 'function') {
       try {
         const t = fn(gl);
-        if (t && typeof t === 'object') return t.texture || t;
+        if (t instanceof WebGLTexture) return t;
+        if (t && typeof t === 'object') {
+          const tex = t.texture || t.tex;
+          if (tex instanceof WebGLTexture) return tex;
+        }
       } catch (e) {
         // ignore and try the next candidate
       }

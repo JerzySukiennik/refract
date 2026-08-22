@@ -497,5 +497,66 @@ test('fixed optics from the level are traced even when not in the optics list', 
   ok(withList.segments.length === 2, 'and must not be duplicated');
 });
 
+// --- handed warm/cool fringe (REFERENCE.md 4.2) ---------------------------------------
+
+test('perp starts at +1 and flips exactly once per mirror bounce', () => {
+  const level = emptyLevel({ emitter: { x: 500, y: 100, dir: Math.PI / 2 } });
+  const optics = [
+    { id: 'm1', type: 'mirror', x: 500, y: 700, angle: -Math.PI / 4 },
+    { id: 'm2', type: 'mirror', x: 200, y: 700, angle: Math.PI / 4 },
+    { id: 'm3', type: 'mirror', x: 200, y: 300, angle: -Math.PI / 4 },
+  ];
+  const res = traceScene(level, optics, { spectralSamples: 1 });
+  const chain = res.segments.filter((s) => s.nm === 0);
+  ok(chain.length === 4, `expected 4 white segments, got ${chain.length}`);
+  for (const s of chain) {
+    ok(s.perp === 1 || s.perp === -1, `perp must be signed unity, got ${s.perp}`);
+    const want = (s.generation & 1) === 0 ? 1 : -1;
+    ok(s.perp === want, `generation ${s.generation} should carry perp ${want}, got ${s.perp}`);
+  }
+  // The renderer cannot recover this from the direction: check the amber side really
+  // does swap around each bounce, with n = (-dy, dx) in screen space.
+  for (let i = 1; i < chain.length; i++) {
+    ok(chain[i].perp === -chain[i - 1].perp, `bounce ${i} did not flip perp`);
+  }
+});
+
+test('mirrors keep 90 % of the beam and the loss stays in the energy audit', () => {
+  const level = emptyLevel({ emitter: { x: 500, y: 100, dir: Math.PI / 2 } });
+  const optics = [{ id: 'm1', type: 'mirror', x: 500, y: 700, angle: Math.PI / 4 }];
+  const res = traceScene(level, optics, { spectralSamples: 1 });
+  const chain = res.segments.filter((s) => s.nm === 0);
+  near(chain[0].intensity, 1, 1e-12, 'emitter run is undimmed');
+  near(chain[1].intensity, 0.9, 1e-12, 'one bounce keeps 90 %');
+  near(res.stats.energyTerminated + res.stats.energyPruned, 1, 1e-9, 'mirror loss is audited');
+});
+
+test('perp survives refraction through a prism', () => {
+  const res = traceScene(prismLevel, prismOptics, { spectralSamples: 8 });
+  const white = res.segments.find((s) => s.nm === 0 && s.generation === 0);
+  ok(white.perp === 1, 'the emitter run starts right-handed');
+  const inGlass = res.segments.filter((s) => s.nm > 0 && s.inside && s.generation === 1);
+  ok(inGlass.length === 8, `expected 8 in-glass children, got ${inGlass.length}`);
+  for (const s of inGlass) ok(s.perp === white.perp, `child ${s.nm} lost its parent sign`);
+  const fan = primaryFan(res);
+  ok(fan.length === 8, `expected 8 fan rays, got ${fan.length}`);
+  for (const s of fan) ok(s.perp === white.perp, `fan ray ${s.nm} flipped on refraction`);
+});
+
+test('a prism between two mirrors does not disturb the flip count', () => {
+  const level = emptyLevel({ emitter: { x: 218.1, y: 397.4, dir: 20 * DEG } });
+  const optics = [
+    { id: 'p1', type: 'prism', x: 500, y: 500, angle: Math.PI / 2 },
+    { id: 'm1', type: 'mirror', x: 820, y: 640, angle: Math.PI / 4 },
+  ];
+  const res = traceScene(level, optics, { spectralSamples: 8 });
+  for (const s of res.segments) {
+    ok(s.perp === 1 || s.perp === -1, 'every segment carries a signed frame');
+  }
+  const before = res.segments.filter((s) => s.nm > 0 && !s.inside && s.generation === 2);
+  ok(before.length > 0, 'the fan must exist');
+  for (const s of before) ok(s.perp === 1, 'a refracted fan ray keeps the emitter sign');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
