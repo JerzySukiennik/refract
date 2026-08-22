@@ -113,3 +113,68 @@ What this changes:
   by layout.
 - **We are free to be better-looking.** Anywhere our own art direction beats the
   reference, take it. Section 5 lists where the reference is already weak.
+
+---
+
+## 9. My own reading of the build, 2026-08-23
+
+I drove the real game and compared it against the reference myself. These are the tells I
+can see, in priority order. A critic may phrase them differently; these are binding
+regardless.
+
+### 9.1 The beam reads as vector art, not as light — this is the biggest tell
+
+Two faults compound:
+
+1. **The fringe is a hard-edged coloured outline.** Right now there is a distinct
+   red-orange line and a distinct blue line running along the beam's two edges, crisp
+   enough to look like a sticker or a chromatic-aberration artifact on a solid bar. The
+   reference's shoulders are SOFT: measured in REFERENCE.md 4.2, the warm shoulder peaks
+   around 0.9–1.4x the FWHM half-width and blends back into the core over roughly 15 px.
+   Ours transitions in about 2 px. The fringe must be a gradient across the beam's whole
+   shoulder region, not a stroke at its border.
+2. **There is no grain.** The core is perfectly, mathematically smooth. REFERENCE.md 4.3
+   measured anisotropic noise concentrated in the core — correlation length about 3 px
+   across the beam and 8–18 px along it, and recommends authoring at 4–6 % RMS because
+   video compression eats it down to the measured 1.2 %. A flawless gradient is the single
+   clearest "clean vector render" signature.
+
+Together these make the beam look like a white pipe with coloured piping. It should look
+like a volume of lit, dusty air.
+
+### 9.2 The dispersion fan is too saturated and too even
+
+It currently reads like a CSS linear-gradient rainbow: vivid green, uniform width, printed
+edges. REFERENCE.md 5.2 measured the opposite — **green is the LEAST saturated point in
+the fan (0.22–0.31)**, hue separation does not begin until about 120 units from the prism,
+and the fan brightens near the prism and widens as it travels. Ours separates immediately
+and holds a near-constant width. Desaturate the middle of the fan, delay the separation,
+and let the wedge genuinely spread.
+
+### 9.3 Light still does not reach the walls
+
+Proximity lighting was implemented but I cannot see it. In a frame with several beams at
+full brightness passing within a hundred units of brick, the brick is visually unchanged.
+Either the light array is not being populated, the falloff constants are far too tight, or
+the contribution is being added below the visible threshold. Verify it by capturing one
+frame with beams and one without and differencing the wall pixels — if the difference is
+under a couple of percent it is not working, which is exactly the reference's failure that
+we said we would beat.
+
+### 9.4 Interior wall slabs look pasted on
+
+The border ring and the interior slabs use visibly different brick scales, and the interior
+slabs have hard rectangular edges with no bevel or contact shadow, so they read as
+rectangles laid on top of the board rather than masonry belonging to it. Brick scale must
+be continuous across every wall, and interior slabs need the same top-left lighting and
+far-edge rim the border has.
+
+### 9.5 Mirrors are nearly invisible
+
+At a glance a placed mirror is a thin white line that disappears against a bright beam. It
+needs enough substrate and contrast to read as a physical object even when lit hard.
+
+### 9.6 Level colour legibility
+
+At least one level pairs blue with cyan among its three receptors, which are hard to tell
+apart at ring size and harder once the fan is on them. Prefer maximally distinct triples.

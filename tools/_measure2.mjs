@@ -11,14 +11,14 @@ await page.setViewport({width:720,height:694,deviceScaleFactor:2});
 await page.goto('http://localhost:8201/?capture=1',{waitUntil:'networkidle0'});
 await new Promise(r=>setTimeout(r,1500));
 console.log('REFRACT api:', await page.evaluate(()=>Object.keys(window.REFRACT||{})));
-await page.evaluate(async()=>{ await window.REFRACT.script('solved'); await window.REFRACT.modal('solved'); });
+await page.evaluate(async()=>{ await window.REFRACT.script('solved'); await window.REFRACT.showModal('solved'); });
 await new Promise(r=>setTimeout(r,1200));
 const d=await page.evaluate(()=>{
  const r=el=>{if(!el)return null;const b=el.getBoundingClientRect(),c=getComputedStyle(el);return{t:el.textContent.trim().slice(0,30),x:+b.x.toFixed(1),y:+b.y.toFixed(1),w:+b.width.toFixed(1),h:+b.height.toFixed(1),fs:c.fontSize,ls:c.letterSpacing,col:c.color,bg:c.backgroundColor,bd:c.borderColor};};
  return {panel:r(document.querySelector('.panel')),word:r(document.querySelector('.panel-word')),sub:r(document.querySelector('.panel-sub')),btns:[...document.querySelectorAll('.panel-actions .btn')].map(r),scrim:getComputedStyle(document.querySelector('.scrim')).backgroundColor};
 });
 console.log('SOLVED', JSON.stringify(d,null,1));
-await page.evaluate(async()=>{ await window.REFRACT.modal('levels'); });
+await page.evaluate(async()=>{ await window.REFRACT.showModal('levels'); });
 await new Promise(r=>setTimeout(r,900));
 const g=await page.evaluate(()=>{
  const r=el=>{if(!el)return null;const b=el.getBoundingClientRect(),c=getComputedStyle(el);return{t:el.textContent.trim().slice(0,26),x:+b.x.toFixed(1),y:+b.y.toFixed(1),w:+b.width.toFixed(1),h:+b.height.toFixed(1),fs:c.fontSize,ls:c.letterSpacing,col:c.color,bd:c.borderColor,op:c.opacity};};
