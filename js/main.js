@@ -227,6 +227,7 @@ function boot() {
   call(pick(hud, 'initHud', 'init', 'createHud', 'mount'));
   call(pick(modals, 'initModals', 'init', 'createModals', 'mount'));
   call(pick(cursors, 'initCursors', 'init', 'createCursors', 'mount'), canvas);
+  let suppressAutoModal = false;
   const showModal = pick(modals, 'show', 'showModal', 'open');
   const hideModal = pick(modals, 'hide', 'hideModal', 'close');
   const setHudCursorPos = pick(cursors, 'setPosition', 'setCursorPosition', 'moveCursor');
@@ -272,7 +273,9 @@ function boot() {
   on('solved', () => {
     call(audioPlay, 'receptor');
     spawnBurst();
-    setTimeout(() => call(showModal, 'solved'), 750);
+    // The capture harness composes solved boards deliberately and needs to photograph the
+    // lit board itself; it asks for the panel explicitly via REFRACT.showModal('solved').
+    if (!suppressAutoModal) setTimeout(() => call(showModal, 'solved'), 750);
   });
   on('unsolved', () => {
     receptorFadeAt = -1;
@@ -415,6 +418,12 @@ function boot() {
     return i < 0 ? 0 : i;
   }
 
+  // Same, but reports a miss so callers can fall back to a looser predicate.
+  function findLevelIndex(predicate) {
+    const i = LEVELS.findIndex(predicate);
+    return i < 0 ? null : i;
+  }
+
   function placeAll(list) {
     const ids = [];
     for (const o of list) {
@@ -426,6 +435,8 @@ function boot() {
 
   async function script(name) {
     call(hideModal);
+    suppressAutoModal = true;
+    call(pick(modals, 'setAutoOpen'), false);
     if (name === 'protractor') {
       setLevel(levelIndexWhere((l) => (l.inventory && l.inventory.mirror) > 0));
       clearOptics();
@@ -445,18 +456,22 @@ function boot() {
       await settle();
       return;
     }
-    const wantsPrism = name === 'dispersion';
-    const index = wantsPrism
-      ? levelIndexWhere((l) => (l.inventory && l.inventory.prism) > 0)
+    // 'dispersion' wants the richest prism board we have, with its FULL solution placed so
+    // a real fan is actually in flight. Placing solution.length - 1 optics silently yielded
+    // an empty board on a par-1 level, which cost a whole round of blind judging.
+    const hasPrism = (l) => (l.inventory && l.inventory.prism > 0)
+      || (l.fixed || []).some((o) => o.type === 'prism')
+      || (l.solution || []).some((o) => o.type === 'prism');
+    const index = name === 'dispersion'
+      ? (findLevelIndex((l) => hasPrism(l) && l.par >= 3)
+        ?? findLevelIndex((l) => hasPrism(l) && l.par >= 2)
+        ?? levelIndexWhere(hasPrism))
       : levelIndexWhere((l) => (l.inventory && l.inventory.mirror) >= 3);
     setLevel(name === 'solved' ? levelIndexWhere((l) => l.par >= 3) : index);
     clearOptics();
     const solution = solutionFor(state.level);
-    if (name === 'solved') {
+    if (name === 'solved' || name === 'dispersion') {
       placeAll(solution);
-      selectOptic(null);
-    } else if (name === 'dispersion') {
-      placeAll(solution.slice(0, Math.max(0, solution.length - 1)));
       selectOptic(null);
     } else {
       const ids = placeAll(solution);
@@ -514,6 +529,10 @@ function boot() {
       return state.solved;
     },
     showModal(name) {
+      if (!name) {
+        suppressAutoModal = false;
+        call(pick(modals, 'setAutoOpen'), true);
+      }
       if (name) call(showModal, name);
       else call(hideModal);
     },

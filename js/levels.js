@@ -173,9 +173,9 @@ export const LEVELS = [
       { x: 760, y: 860, w: 200, h: 40 },
     ],
     receptors: [
+      { x: 600, y: 425, color: 'blue' },
       { x: 675, y: 225, color: 'green' },
-      { x: 925, y: 125, color: 'orange' },
-      { x: 850, y: 225, color: 'red' },
+      { x: 900, y: 150, color: 'orange' },
     ],
     inventory: { mirror: 1, prism: 1 },
     fixed: [],

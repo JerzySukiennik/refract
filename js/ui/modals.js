@@ -347,6 +347,14 @@ export function hideModal() {
 
 export function openModal() { return current; }
 
+// The capture harness composes solved boards on purpose and must photograph the lit board,
+// not the panel that covers it. It asks for the panel explicitly instead.
+let autoOpen = true;
+export function setAutoOpen(on) {
+  autoOpen = !!on;
+  if (!autoOpen) window.clearTimeout(solveTimer);
+}
+
 function onStateChange() {
   const solved = !!state.solved;
   if (solved && !wasSolved) {
@@ -354,7 +362,7 @@ function onStateChange() {
     recordSolve(Number.isFinite(state.levelIndex) ? state.levelIndex : 0, usedCount());
     window.clearTimeout(solveTimer);
     solveTimer = window.setTimeout(() => {
-      if (state.solved && current !== 'solved') showModal('solved');
+      if (autoOpen && state.solved && current !== 'solved') showModal('solved');
     }, SOLVE_DELAY);
   } else if (!solved && wasSolved) {
     wasSolved = false;
