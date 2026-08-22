@@ -16,6 +16,20 @@ import { createNoiseTexture } from './textures.js';
 const MAX_BLOOM_STEPS = 6;
 const FALLBACK_HDR_SCALE = 0.25;
 
+// The contract documents setParams as taking scalars ({bloom, grain, aberration,
+// vignette, exposure}); this module expands each into a group. Accept both spellings so a
+// scalar reaches the group's headline property instead of overwriting the group.
+const SCALAR_TARGET = { bloom: 'intensity', grain: 'amount', aberration: 'amount', vignette: 'amount' };
+
+function normalizeParams(patch) {
+  const out = {};
+  for (const [key, value] of Object.entries(patch || {})) {
+    const target = SCALAR_TARGET[key];
+    out[key] = (target && typeof value === 'number') ? { [target]: value } : value;
+  }
+  return out;
+}
+
 const DEFAULTS = {
   exposure: 1.0,
   bloom: {
@@ -448,7 +462,7 @@ export function createPipeline(gl) {
     },
 
     setParams(patch) {
-      deepMerge(params, patch || {});
+      deepMerge(params, normalizeParams(patch));
       params.bloom.steps = Math.max(1, Math.min(MAX_BLOOM_STEPS, params.bloom.steps | 0));
       return clone(params);
     },
