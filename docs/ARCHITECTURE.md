@@ -80,8 +80,9 @@ tools/                dev-only scripts (screenshot capture, level validation)
   board→pixel transform and exposes it. UI code must never hardcode pixel positions
   of board features — ask the transform.
 - Angles are in **radians**, measured counter-clockwise from +x, and stored normalized
-  to `[0, 2π)`. The HUD displays degrees clockwise-from-up to match the reference
-  protractor readout; conversion lives in `ui/hud.js` only.
+  to `[0, 2π)`. The HUD prints plain `(angle * 180 / Math.PI).toFixed(1) + '°'`. There is
+  no clockwise-from-up conversion — REFERENCE.md 10.3 conflict 2 measured the reference's
+  readout as plain CCW-from-+x degrees.
 
 ## 4. Shared data shapes
 
@@ -91,7 +92,10 @@ tools/                dev-only scripts (screenshot capture, level validation)
   id: 13,
   name: 'SLOW WATER',                            // OUR name. Never reuse a reference name.
   par: 5,
-  emitter: { x: 40, y: 175, dir: 0 },            // dir in radians, beam leaves this way
+  emitter: { x: 120, y: 175, dir: 0 },           // dir in radians, beam leaves this way
+                                                 // Emitters are FREE-STANDING housings in
+                                                 // the interior, clear of the wall — not
+                                                 // fixtures embedded in it.
   walls: [ { x, y, w, h } ],                     // axis-aligned, board units, interior only
   receptors: [ { x, y, color: 'blue' } ],        // color ∈ 'red'|'orange'|'yellow'|'green'|'cyan'|'blue'|'violet'
   inventory: { mirror: 4, prism: 1 },
@@ -313,3 +317,54 @@ harness. Required names:
 **720 × 694** (the exact reference frame size, so blind comparisons are apples to
 apples), drives `window.REFRACT`, and writes `progress/shots/<name>.png`.
 Scenes are defined in `tools/scenes.mjs` and mirror specific reference frames.
+
+
+## 11. Resolutions of the conflicts REFERENCE.md 10.3 raised
+
+Binding. Where this section and an earlier section disagree, this section wins.
+
+1. **Wall thickness is 40 u**, interior `[40, 960]`, ledges included. Already applied to 3.
+2. **No clockwise-from-up angle conversion.** Plain CCW-from-+x degrees, one decimal.
+   Applied to 3.
+3. **Emitters are free-standing housings placed in the interior**, roughly 40 u clear of
+   the nearest wall face, not fixtures embedded in a wall. Applied to 4.
+4. **The protractor ring has NO tick marks.** A plain hairline circle at about 30 % opacity
+   plus the handle dot, and the readout centred 8 u above the ring — not beside the handle.
+   This overrides the "tick marks at 15 degree multiples" in the board renderer brief.
+   REFERENCE.md 10.1 item 13: the restraint is what makes it read as an instrument.
+5. **Rotation snapping stays** at 5 degrees with a 15 degree magnet, Shift to disable. The
+   readout must show the SNAPPED value, so it will read `20.0°`, never `19.7°`.
+6. **The beam core must never clip to white.** Peak luminance stays in the 0.78–0.89 range
+   after tonemapping. Clipping flattens the beam into a polygon and destroys the fringe,
+   which is the whole look. Drive bloom from HDR values above 1.0 before the tonemap, not
+   by blowing out the composited core.
+7. **White light does not attenuate with distance; mirrors attenuate 10 % per bounce.**
+   Both, not one or the other.
+8. **Mortar is LIGHTER than the brick faces.** The common procedural-brick instinct is
+   backwards here.
+9. **The prism emits three things**: the primary fan, a weaker secondary fan with reversed
+   hue order, and a narrow neutral residual. Rendering only the primary makes the prism read
+   as a rainbow dispenser rather than as a piece of glass.
+10. **Hue separation begins about 120 u from the prism**, not at its exit face. Near the
+    prism the fan is close to neutral. Green is the least saturated point in the fan, not
+    the most.
+11. **Receptors extinguish after the solve burst** rather than staying lit under the panel,
+    and the burst is three staggered expanding rings per receptor.
+
+### Deliberate departures — we are beating the reference here, not missing it
+
+- **Global film grain, vignette and chromatic aberration.** The reference has none: its
+  black background measures a standard deviation of exactly 0.0, which reads as a clean
+  vector render rather than a photographed scene. We keep all three, very subtle, because
+  they tie the brick, the black and the beams into one image. Keep them low enough that
+  the black still reads as black.
+- **Real light spilling onto walls.** The reference has literally zero: what looks like
+  glow is only bloom compositing. Per-fragment accumulation from nearby beam segments,
+  tinted by wavelength, is the single biggest available upgrade and it is cheap. A spectrum
+  sweeping across brick and painting it in sequence is the shot the reference never gets.
+- **A dimmed, slightly blurred backdrop behind the solve panel**, so the panel has
+  somewhere to sit instead of lying flat on a bright board.
+- **A next-level affordance and a beat-par state** on the solve panel.
+- **The hint line clear of the brick**, on its own row, at readable contrast.
+- **Receptor spacing snapped to the grid.** The reference's is irregular for no reason.
+- **A very light volumetric haze** so beams read as occupying air.
