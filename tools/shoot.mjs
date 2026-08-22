@@ -57,8 +57,31 @@ fs.mkdirSync(outDir, { recursive: true });
 const PORT = 8137 + Math.floor(Math.random() * 400);
 const server = await serve(PORT);
 
+// Puppeteer's pinned build is not always downloadable here (npm blocks the postinstall
+// and the CDN provider intermittently fails), so resolve whatever real Chrome exists:
+// a cached Chrome for Testing first, then the system install.
+function findChrome() {
+  if (process.env.REFRACT_CHROME) return process.env.REFRACT_CHROME;
+  const cache = path.join(process.env.HOME || '', '.cache/puppeteer/chrome');
+  if (fs.existsSync(cache)) {
+    const builds = fs.readdirSync(cache)
+      .map(d => path.join(cache, d, 'chrome-mac-x64',
+        'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'))
+      .filter(p => fs.existsSync(p))
+      .sort();
+    if (builds.length) return builds[builds.length - 1];
+  }
+  const system = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  if (fs.existsSync(system)) return system;
+  return undefined;
+}
+
+const executablePath = findChrome();
+if (executablePath) console.log(`chrome ${executablePath.split('/').slice(-4, -3)[0] || ''}`);
+
 const browser = await puppeteer.launch({
   headless: 'new',
+  executablePath,
   args: [
     '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=default',
     '--enable-webgl', '--ignore-gpu-blocklist', '--enable-gpu-rasterization',
