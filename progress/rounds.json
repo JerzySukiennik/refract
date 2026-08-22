@@ -1,0 +1,22 @@
+{
+  "project": "REFRACT",
+  "tagline": "Steering and dispersing light. Built against a reference, round by round.",
+  "updated": "2026-08-22T18:30:00Z",
+  "verdictLegend": {
+    "reference": "The blind critic picked the REFERENCE as the real game. We lost the round.",
+    "ours": "The blind critic picked OURS as the real game. We won the round.",
+    "tie": "The critic could not tell them apart.",
+    "pending": "Round in flight."
+  },
+  "rounds": [
+    {
+      "n": 0,
+      "title": "Reference teardown & architecture",
+      "status": "done",
+      "verdict": "pending",
+      "summary": "Measured the 38 reference frames plus 150 dense frames at 4 fps into a numbers-first spec. Wrote the binding module contract: 1000x1000 board units, WebGL2 HDR pipeline for the board, DOM chrome for the HUD, physical Sellmeier dispersion rather than a fake rainbow gradient.",
+      "gap": "Nothing built yet.",
+      "shots": []
+    }
+  ]
+}

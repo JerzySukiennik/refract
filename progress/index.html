@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REFRACT — build log</title>
+<meta name="description" content="Round-by-round build log of Refract, a browser puzzle game about steering and dispersing light.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#000; --ink:#e8e6e3; --dim:#6b6864; --dimmer:#3a3835;
+    --line:#1e1c1a; --line2:#2c2926;
+    --amber:#ffb454; --spectrum-a:#5b8cff; --spectrum-b:#4bd66f; --spectrum-c:#ff9a3c;
+    --win:#4bd66f; --loss:#ff5f56; --tie:#ffb454; --pending:#6b6864;
+    --pad: clamp(16px, 4vw, 56px);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink)}
+  body{font-family:'Space Mono',ui-monospace,monospace;font-size:13px;line-height:1.65;
+       -webkit-font-smoothing:antialiased}
+  a{color:inherit}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 var(--pad) 120px}
+
+  header{padding:clamp(48px,10vh,120px) 0 0;position:relative}
+  .eyebrow{font-size:10px;letter-spacing:.42em;color:var(--dim);text-transform:uppercase}
+  h1{font-family:'Bebas Neue',Impact,sans-serif;font-weight:400;
+     font-size:clamp(56px,14vw,150px);line-height:.86;letter-spacing:.06em;margin:.18em 0 0}
+  .spectrum{height:2px;margin:26px 0 0;background:linear-gradient(90deg,
+    #7b2ff7 0%,#3b5bff 14%,#00c2ff 28%,#00e08a 44%,#b6e000 58%,#ffc400 72%,#ff6a00 86%,#e0143c 100%);
+    opacity:.85}
+  .tagline{color:var(--dim);margin:20px 0 0;max-width:52ch}
+
+  .meta{display:flex;flex-wrap:wrap;gap:10px;margin:34px 0 0}
+  .chip{border:1px solid var(--line2);padding:7px 13px;font-size:10px;letter-spacing:.22em;
+        text-transform:uppercase;color:var(--dim);text-decoration:none;transition:.2s}
+  .chip:hover{color:var(--ink);border-color:var(--dim)}
+  .chip strong{color:var(--ink);font-weight:400}
+
+  .scoreboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+              gap:1px;background:var(--line);border:1px solid var(--line);margin:56px 0 0}
+  .stat{background:var(--bg);padding:22px 18px}
+  .stat b{display:block;font-family:'Bebas Neue',sans-serif;font-size:44px;line-height:1;
+          letter-spacing:.03em;font-weight:400}
+  .stat span{font-size:9.5px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim)}
+
+  h2.sec{font-size:10px;letter-spacing:.4em;text-transform:uppercase;color:var(--dim);
+         margin:84px 0 0;padding-bottom:14px;border-bottom:1px solid var(--line)}
+
+  .round{border-bottom:1px solid var(--line);padding:38px 0}
+  .round-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:16px}
+  .rn{font-family:'Bebas Neue',sans-serif;font-size:34px;line-height:1;color:var(--dimmer);
+      letter-spacing:.04em;min-width:56px}
+  .rt{font-size:16px;letter-spacing:.14em;text-transform:uppercase;flex:1 1 260px}
+  .verdict{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;
+           border:1px solid currentColor;padding:5px 11px;white-space:nowrap}
+  .v-ours{color:var(--win)} .v-reference{color:var(--loss)}
+  .v-tie{color:var(--tie)} .v-pending{color:var(--pending)}
+
+  .round p{color:#b4b0ab;max-width:78ch;margin:18px 0 0}
+  .gap{margin:18px 0 0;padding:14px 16px;border-left:2px solid var(--amber);
+       background:rgba(255,180,84,.045);color:#cfc9c1;max-width:78ch}
+  .gap b{color:var(--amber);font-weight:400;font-size:9.5px;letter-spacing:.24em;
+         text-transform:uppercase;display:block;margin-bottom:6px}
+
+  .shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin:24px 0 0}
+  figure{margin:0}
+  figure img{width:100%;display:block;border:1px solid var(--line2);background:#080808;
+             cursor:zoom-in;transition:border-color .2s}
+  figure img:hover{border-color:var(--dim)}
+  figcaption{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);
+             margin-top:8px}
+
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:24px 0 0}
+  .pair figcaption{color:var(--amber)}
+  @media(max-width:560px){.pair{grid-template-columns:1fr}}
+
+  dialog{border:none;background:rgba(0,0,0,.94);max-width:96vw;max-height:96vh;padding:0}
+  dialog::backdrop{background:rgba(0,0,0,.9)}
+  dialog img{max-width:96vw;max-height:96vh;display:block;cursor:zoom-out}
+
+  footer{color:var(--dimmer);font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+         padding:60px 0 0;border-top:1px solid var(--line);margin-top:60px}
+  .err{color:var(--loss);padding:40px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Build log</div>
+    <h1>REFRACT</h1>
+    <div class="spectrum"></div>
+    <p class="tagline" id="tagline"></p>
+    <div class="meta">
+      <a class="chip" href="/">Play <strong>refract.gzowo.fun</strong></a>
+      <a class="chip" href="https://github.com/JerzySukiennik/refract">Source <strong>GitHub</strong></a>
+      <span class="chip">Updated <strong id="updated">—</strong></span>
+    </div>
+    <div class="scoreboard" id="scoreboard"></div>
+  </header>
+
+  <h2 class="sec">Rounds — newest first</h2>
+  <main id="rounds"></main>
+
+  <footer>Refract · built with Claude Code · Kenney CC0 cursors &amp; audio</footer>
+</div>
+
+<dialog id="lightbox"><img alt=""></dialog>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const VERDICT_LABEL = {
+  ours: 'Ours picked as real',
+  reference: 'Reference picked as real',
+  tie: 'Indistinguishable',
+  pending: 'In flight'
+};
+
+function shotFig(s){
+  const src = esc(s.src.startsWith('http') ? s.src : s.src.replace(/^\.?\//,''));
+  return `<figure><img loading="lazy" src="${src}" alt="${esc(s.caption||'')}">
+          <figcaption>${esc(s.caption||'')}</figcaption></figure>`;
+}
+
+function render(data){
+  document.getElementById('tagline').textContent = data.tagline || '';
+  document.getElementById('updated').textContent =
+    new Date(data.updated).toISOString().slice(0,16).replace('T',' ') + ' UTC';
+
+  const rounds = [...(data.rounds||[])].sort((a,b)=>b.n-a.n);
+  const judged = rounds.filter(r => r.verdict && r.verdict !== 'pending');
+  const wins = judged.filter(r => r.verdict === 'ours').length;
+  const ties = judged.filter(r => r.verdict === 'tie').length;
+  const shots = rounds.reduce((n,r)=>n+((r.shots||[]).length)+((r.blind||[]).length),0);
+
+  document.getElementById('scoreboard').innerHTML = [
+    ['Rounds run', rounds.filter(r=>r.status!=='pending').length],
+    ['Blind tests', judged.length],
+    ['Rounds won', wins + (ties ? '+' + ties : '')],
+    ['Screenshots', shots]
+  ].map(([l,v]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('');
+
+  document.getElementById('rounds').innerHTML = rounds.map(r => {
+    const v = r.verdict || 'pending';
+    const blind = (r.blind||[]).length
+      ? `<div class="pair">${r.blind.map(shotFig).join('')}</div>` : '';
+    const shotsHtml = (r.shots||[]).length
+      ? `<div class="shots">${r.shots.map(shotFig).join('')}</div>` : '';
+    const gap = r.gap
+      ? `<div class="gap"><b>Biggest remaining gap</b>${esc(r.gap)}</div>` : '';
+    return `<article class="round">
+      <div class="round-head">
+        <div class="rn">${String(r.n).padStart(2,'0')}</div>
+        <div class="rt">${esc(r.title)}</div>
+        <div class="verdict v-${esc(v)}">${esc(VERDICT_LABEL[v]||v)}</div>
+      </div>
+      <p>${esc(r.summary)}</p>
+      ${gap}${blind}${shotsHtml}
+    </article>`;
+  }).join('');
+}
+
+const lb = document.getElementById('lightbox');
+document.addEventListener('click', e => {
+  if (e.target.matches('figure img')) { lb.querySelector('img').src = e.target.src; lb.showModal(); }
+  else if (e.target.closest('dialog')) lb.close();
+});
+
+fetch('rounds.json?t=' + Date.now())
+  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+  .then(render)
+  .catch(e => { document.getElementById('rounds').innerHTML =
+    `<p class="err">Could not load rounds.json (${esc(e)}).</p>`; });
+</script>
+</body>
+</html>
