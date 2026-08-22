@@ -20,11 +20,20 @@ fringe is on the **right-hand side of the direction of travel**, and there is a
 correspondingly cooler, faintly blue-white fringe on the left-hand side. It reads as the
 beam itself being very slightly dispersed — a prismatic edge on a beam of white light.
 
+**SUPERSEDED IN PART — read `docs/REFERENCE.md` 4.2, which is more accurate than this
+note.** My "right-hand side of travel" rule happens to fit generations 0 and 2 but fails
+on the others. The measured truth is better: the transverse fringe axis is a real property
+carried by the ray and **mirrored at every reflection**, like physical handedness. The
+tracer therefore emits a signed `perp` field (+1 / -1) on every segment, initialised to +1
+at the emitter and flipped at each mirror bounce. See the segment shape in
+`ARCHITECTURE.md` section 4.
+
 Implementation: in the beam fragment shader, the cross-sectional coordinate must be
-**signed** with respect to the segment's direction, and the shoulder tint must lerp from
-cool on the negative side to warm on the positive side. Do not use `abs()` on the
-cross-section coordinate for the tint. Use it only for the intensity profile, which IS
-symmetric.
+**signed**, multiplied by the segment's `perp`, and the shoulder tint lerps from cool on
+the negative side to warm on the positive side. Do not use `abs()` on the cross-section
+coordinate for the tint — only for the intensity profile, which IS symmetric. Concretely,
+REFERENCE.md 4.2 gives it as: offset the R channel's profile by +2.6 px and the B channel's
+by -2.6 px along `perp`, then boost the resulting chroma difference by about 1.3x.
 
 ## 2. Receptors are always emissive
 

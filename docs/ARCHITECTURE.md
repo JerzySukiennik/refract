@@ -103,11 +103,17 @@ tools/                dev-only scripts (screenshot capture, level validation)
 { id: 'o7', type: 'mirror'|'prism', x, y, angle, fixed: false, owner: 'p3'|null }
 
 // A traced ray segment, produced by optics/trace.js
-{ ax, ay, bx, by, nm, intensity, generation, terminal }
+{ ax, ay, bx, by, nm, intensity, generation, terminal, perp }
 //   nm         wavelength in nanometres, or 0 for composite white
 //   intensity  0..1 linear radiance multiplier
 //   generation bounce depth (0 = straight out of emitter)
 //   terminal   null | 'wall' | 'receptor:<id>' | 'depth' | 'escape'
+//   perp       +1 or -1. The sign of the ray's transverse frame, which decides which
+//              shoulder of the beam is warm and which is cool. Initialised to +1 at the
+//              emitter and FLIPPED at every mirror reflection, exactly as physical
+//              handedness is. It must be carried by the tracer — the renderer cannot
+//              derive it from the segment direction. See docs/REFERENCE.md 4.2, which
+//              measured this across four generations of one beam path.
 
 // Receptor evaluation, produced by optics/trace.js
 { id, color, litNm, litIntensity, satisfied: bool }
