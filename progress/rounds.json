@@ -36,11 +36,11 @@
       "gap": "No emitter housing, no inventory dock, the title shows the game's name instead of the level's, and par reads 0. Levels validate 8 of 24.",
       "shots": [
         {
-          "src": "shots/r0-first-render.png",
+          "src": "web/r0-first-render.jpg",
           "caption": "First frame that rendered correctly"
         },
         {
-          "src": "shots/r0-beam-detail.png",
+          "src": "web/r0-beam-detail.jpg",
           "caption": "Beam detail \u2014 chiral fringe working"
         }
       ]

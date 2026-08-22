@@ -1,11 +1,9 @@
 // Overlay panels: SOLVED, level grid, name entry and the multiplayer roster, in one focus-trapped container.
 
-import { state, on, setLevel } from '../state.js';
+import { state, on, emit, setLevel, markCompleted, bestFor, setPlayerName } from '../state.js';
 import { LEVELS } from '../levels.js';
 import { playSfx } from './hud.js';
 
-const STORE_KEY = 'refract.progress.v1';
-const NAME_KEY = 'refract.name';
 const SOLVE_DELAY = 750;
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
 
@@ -31,34 +29,44 @@ export function setModalHandlers(next) {
 
 /* ---------- progress ---------- */
 
-function loadProgress() {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    const p = raw ? JSON.parse(raw) : null;
-    if (p && typeof p === 'object') return { best: p.best || {}, unlocked: p.unlocked | 0 };
-  } catch (err) { void err; }
-  return { best: {}, unlocked: 0 };
+/* js/state.js owns the persisted progress under 'refract.progress.v1', keyed by the level's
+   own `id`. Writing a second, differently shaped record to that same key used to clobber it,
+   so everything here reads and writes through state's API instead. */
+
+function bestByIndex(index) {
+  const lvl = LEVELS[index];
+  if (!lvl) return null;
+  return bestFor(lvl.id);
 }
 
-function saveProgress(p) {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(p)); } catch (err) { void err; }
+// A level is open if it is the first, or the level before it has been cleared.
+function unlockedThrough() {
+  let n = 0;
+  for (let i = 1; i < LEVELS.length; i++) {
+    if (bestByIndex(i - 1) === null) break;
+    n = i;
+  }
+  return n;
+}
+
+function clearedCount() {
+  let n = 0;
+  for (let i = 0; i < LEVELS.length; i++) if (bestByIndex(i) !== null) n++;
+  return n;
 }
 
 export function recordSolve(levelIndex, used) {
-  const p = loadProgress();
-  const key = String(levelIndex);
-  if (!Number.isFinite(p.best[key]) || used < p.best[key]) p.best[key] = used;
-  p.unlocked = Math.max(p.unlocked, Math.min(levelIndex + 1, LEVELS.length - 1));
-  saveProgress(p);
-  return p;
+  const lvl = LEVELS[levelIndex];
+  if (lvl) markCompleted(lvl.id, used);
+  return { best: bestByIndex(levelIndex), unlocked: unlockedThrough() };
 }
 
 export function storedName() {
-  try { return localStorage.getItem(NAME_KEY) || ''; } catch (err) { return ''; }
+  return (state.me && state.me.name) || '';
 }
 
 function storeName(name) {
-  try { localStorage.setItem(NAME_KEY, name); } catch (err) { void err; }
+  setPlayerName(name);
 }
 
 /* ---------- helpers ---------- */
@@ -117,12 +125,11 @@ function solvedPanel() {
 }
 
 function levelsPanel() {
-  const progress = loadProgress();
   const currentIndex = Number.isFinite(state.levelIndex) ? state.levelIndex : 0;
-  const unlocked = Math.max(progress.unlocked, currentIndex);
+  const unlocked = Math.max(unlockedThrough(), currentIndex);
 
   const cells = LEVELS.map((lvl, i) => {
-    const best = progress.best[String(i)];
+    const best = bestByIndex(i);
     const done = Number.isFinite(best);
     const locked = i > unlocked;
     const par = Number.isFinite(lvl.par) ? lvl.par : 0;
@@ -142,7 +149,7 @@ function levelsPanel() {
       '</button>';
   }).join('');
 
-  const cleared = Object.keys(progress.best).length;
+  const cleared = clearedCount();
 
   return {
     className: 'panel',
@@ -183,7 +190,7 @@ function rosterHTML() {
   return ids.map((id) => {
     const p = players[id] || {};
     const colour = p.color || '#8a888c';
-    const isSelf = id === state.me;
+    const isSelf = !!(state.me && id === state.me.id);
     return '<li><i class="swatch" style="background:' + esc(colour) + ';color:' + esc(colour) + '"></i>' +
       '<span>' + esc(String(p.name || 'GUEST').toUpperCase()) + '</span>' +
       (isSelf ? '<span class="self">YOU</span>' : '') + '</li>';
@@ -254,8 +261,12 @@ function onClick(ev) {
     if (Number.isFinite(i)) pickLevel(i);
   } else if (act === 'leave') {
     playSfx('ui_click');
-    if (handlers.onLeaveRoom) handlers.onLeaveRoom();
-    else document.dispatchEvent(new CustomEvent('refract:leave'));
+    if (handlers.onLeaveRoom) {
+      handlers.onLeaveRoom();
+    } else {
+      emit('multiplayer:leave', null);
+      document.dispatchEvent(new CustomEvent('refract:leave'));
+    }
     hideModal();
   }
 }
@@ -269,8 +280,13 @@ function onSubmit(ev) {
   if (!name || !room) return;
   storeName(name);
   playSfx('ui_switch');
-  if (handlers.onJoin) handlers.onJoin({ name, roomId: room });
-  else document.dispatchEvent(new CustomEvent('refract:join', { detail: { name, roomId: room } }));
+  if (handlers.onJoin) {
+    handlers.onJoin({ name, roomId: room });
+  } else {
+    // js/main.js listens for this on the state bus and calls startMultiplayer().
+    emit('multiplayer:request', { roomId: room, name });
+    document.dispatchEvent(new CustomEvent('refract:join', { detail: { name, roomId: room } }));
+  }
   hideModal();
 }
 

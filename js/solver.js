@@ -319,10 +319,11 @@ function searchFrom(level, prefix, options) {
   const bounds = interior(level);
   const started = now();
   let nodes = 0;
+  let timedOut = false;
 
   const rootRes = traceScene(level, prefix, traceOpts);
   nodes++;
-  if (rootRes.solved) return { solved: true, optics: prefix.slice(), nodesExplored: nodes };
+  if (rootRes.solved) return { solved: true, optics: prefix.slice(), nodesExplored: nodes, timedOut: false };
 
   let frontier = [{ optics: prefix.slice(), res: rootRes, score: scoreState(level, prefix, rootRes, weights) }];
   const grids = [COARSE, FINE];
@@ -332,12 +333,12 @@ function searchFrom(level, prefix, options) {
     const seen = new Set();
     for (let gi = 0; gi < grids.length && produced.length === 0; gi++) {
       for (let f = 0; f < frontier.length; f++) {
-        if (now() - started > budget) break;
+        if (now() - started > budget) { timedOut = true; break; }
         const st = frontier[f];
         const cands = candidates(level, st.optics, st.res, grids[gi], walls, bounds);
         const take = Math.min(cands.length, CANDIDATES_PER_NODE);
         for (let c = 0; c < take; c++) {
-          if (now() - started > budget) break;
+          if (now() - started > budget) { timedOut = true; break; }
           const cand = cands[c];
           const next = st.optics.concat([{ type: cand.type, x: cand.x, y: cand.y, angle: cand.angle }]);
           const sig = signature(next);
@@ -345,7 +346,7 @@ function searchFrom(level, prefix, options) {
           seen.add(sig);
           const res = traceScene(level, next, traceOpts);
           nodes++;
-          if (res.solved) return { solved: true, optics: next, nodesExplored: nodes };
+          if (res.solved) return { solved: true, optics: next, nodesExplored: nodes, timedOut: false };
           produced.push({ optics: next, res, score: scoreState(level, next, res, weights), parent: f });
         }
       }
@@ -370,16 +371,37 @@ function searchFrom(level, prefix, options) {
       if (chosen.indexOf(produced[i]) === -1) chosen.push(produced[i]);
     }
     frontier = chosen;
-    if (now() - started > budget) break;
+    if (now() - started > budget) { timedOut = true; break; }
   }
 
-  return { solved: false, optics: [], nodesExplored: nodes };
+  return { solved: false, optics: [], nodesExplored: nodes, timedOut };
+}
+
+// A level carries its author's own solution (ARCHITECTURE.md section 12), and that is a
+// better answer than anything the search can find: it is exact, instant and known good.
+// The search only has to run when the caller asks for something the level does not already
+// carry - which is precisely the validator's hunt for a solution SHORTER than par.
+function embeddedSolution(level, cap, traceOpts) {
+  const sol = level && level.solution;
+  if (!Array.isArray(sol) || !sol.length || sol.length > cap) return null;
+  const optics = sol.map((o) => ({ type: o.type, x: o.x, y: o.y, angle: o.angle }));
+  return traceScene(level, optics, traceOpts || {}).solved ? optics : null;
 }
 
 export function solve(level, options) {
   const opts = options || {};
+  const inv = level.inventory || {};
+  const cap = Math.min(
+    opts.maxOptics === undefined ? 6 : opts.maxOptics,
+    (inv.mirror || 0) + (inv.prism || 0),
+  );
+  if (opts.useEmbedded !== false) {
+    const known = embeddedSolution(level, cap, opts.traceOpts);
+    if (known) return { solved: true, optics: known, nodesExplored: 1, timedOut: false };
+  }
   const total = opts.timeBudgetMs === undefined ? 12000 : opts.timeBudgetMs;
   let nodes = 0;
+  let timedOut = false;
   for (let p = 0; p < PROFILES.length; p++) {
     const r = searchFrom(level, [], {
       ...opts,
@@ -387,9 +409,13 @@ export function solve(level, options) {
       timeBudgetMs: total / PROFILES.length,
     });
     nodes += r.nodesExplored;
-    if (r.solved) return { solved: true, optics: r.optics, nodesExplored: nodes };
+    if (r.timedOut) timedOut = true;
+    if (r.solved) return { solved: true, optics: r.optics, nodesExplored: nodes, timedOut: false };
   }
-  return { solved: false, optics: [], nodesExplored: nodes };
+  // Not solved. `timedOut` says whether the search ran out of budget or genuinely exhausted
+  // the discretised space it can see, which is the difference between "no shorter solution
+  // was found" and "no shorter solution exists inside the search's own grid".
+  return { solved: false, optics: [], nodesExplored: nodes, timedOut };
 }
 
 const hintCounters = new Map();
@@ -419,15 +445,41 @@ export function hint(level, placedOptics) {
   for (let p = 0; p < PROFILES.length && !found.solved; p++) {
     found = searchFrom(level, placed, { timeBudgetMs: 1200, weights: PROFILES[p] });
   }
-  if (!found.solved) {
+
+  // The short search is allowed to fail on a board it cannot discretise well. When it does,
+  // fall back on the author's own solution, but only while the player is still on that line —
+  // if they have placed something that is not part of it, telling them to add the next piece
+  // of a different plan would be worse than telling them to take a piece back.
+  let next = found.solved ? found.optics[placed.length] : null;
+  if (!next) {
+    const sol = Array.isArray(level.solution) ? level.solution : [];
+    const used = new Array(sol.length).fill(false);
+    let onLine = true;
+    for (let i = 0; i < placed.length; i++) {
+      let hit = -1;
+      for (let j = 0; j < sol.length; j++) {
+        if (used[j] || sol[j].type !== placed[i].type) continue;
+        if (Math.hypot(sol[j].x - placed[i].x, sol[j].y - placed[i].y) > 30) continue;
+        if (Math.abs(norm(sol[j].angle - placed[i].angle + Math.PI) - Math.PI) > 6 * DEG) continue;
+        hit = j;
+        break;
+      }
+      if (hit < 0) { onLine = false; break; }
+      used[hit] = true;
+    }
+    if (onLine) {
+      for (let j = 0; j < sol.length; j++) {
+        if (!used[j]) { next = sol[j]; break; }
+      }
+    }
+  }
+
+  if (!next) {
     const stuck = placed.length > 0
       ? 'Nothing you can still place will finish this arrangement — take a piece back and try another line.'
       : 'Start by finding where the beam wants to go, not where the receptors are.';
     return { text: stuck, ghost: null };
   }
-
-  const next = found.optics[placed.length];
-  if (!next) return { text: level.hint || 'Look again at what the beam already does.', ghost: null };
 
   const missing = unsatisfied(level, current);
   const colours = missing.map((r) => r.color).join(', ');

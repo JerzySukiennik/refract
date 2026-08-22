@@ -272,22 +272,27 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 /* ---------- hint strip under the board ---------- */
 
+/* REFERENCE 10.2 item 9: the reference crams the hint and USED/PAR into one 9 px strip and
+   draws the hint over the brick at #634A48-on-#815751. We give the hint its own row, anchored
+   above the dock so it can never collide with it, and land it in the clear black band just
+   below the board's bottom edge — never over the brick. USED/PAR moves beside the dock. */
 .hint-line {
   position: absolute;
   left: 50%;
-  top: min(
-    calc(var(--board-y) + var(--board-size) + 9px),
-    calc(100% - var(--dock-zone) - 22px)
-  );
+  bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--tile-h) + 4px);
   transform: translateX(-50%);
   margin: 0;
-  width: min(92vw, calc(var(--board-size) * 1.02));
+  /* max() floors the width: --board-size is written from the render transform, and a
+     degenerate transform must not collapse the hint to nothing. */
+  width: min(92vw, max(240px, calc(var(--board-size) * 1.02)));
   text-align: center;
   font-size: var(--fs-micro);
   letter-spacing: var(--tr-hint);
   text-indent: var(--tr-hint);
   color: var(--ink-dim);
   line-height: 1.5;
+  /* Anchored by its bottom edge, so a long hint grows upward into the empty band between
+     the board and the dock instead of pushing down into the tiles. */
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -308,20 +313,24 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 /* ---------- dock ---------- */
 
+/* Three columns so the dock stays exactly centred on the frame (REFERENCE 1.4) while the
+   readout sits beside it rather than stealing the hint's row. */
 .dock-zone {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  height: var(--dock-zone);
-  display: flex;
-  flex-direction: column;
+  left: var(--inset);
+  right: var(--inset);
+  bottom: max(8px, env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  column-gap: clamp(10px, 2.4vw, 26px);
 }
 
 .readout {
+  grid-column: 1;
+  justify-self: end;
+  text-align: right;
+  white-space: nowrap;
   margin: 0;
   font-size: var(--fs-micro);
   letter-spacing: var(--tr-micro);
@@ -336,6 +345,8 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 .readout.is-under .readout-used { color: #6fbf7a; }
 
 .dock {
+  grid-column: 2;
+  justify-self: center;
   display: flex;
   gap: 6px;
   pointer-events: auto;
@@ -816,6 +827,9 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   .level-name { letter-spacing: 0.16em; }
   .level-grid { grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); width: min(90vw, 560px); }
   .panel { padding: 24px 18px; }
+  /* Narrow frames: tighten the readout's tracking so it still fits beside the centred dock. */
+  .readout { letter-spacing: 0.16em; text-indent: 0.16em; }
+  .hint-line { letter-spacing: 0.18em; text-indent: 0.18em; }
 }
 
 @media (max-width: 420px) {
@@ -824,8 +838,11 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 }
 
 @media (max-height: 560px) {
-  :root { --dock-zone: clamp(62px, 15vh, 84px); }
-  .dock-zone { gap: 5px; }
+  :root {
+    --dock-zone: clamp(62px, 15vh, 84px);
+    --tile-h: clamp(38px, calc(var(--board-size) * 0.070), 58px);
+  }
+  .dock-zone { column-gap: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

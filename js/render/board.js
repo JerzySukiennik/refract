@@ -19,6 +19,7 @@ const PRISM_R = PRISM_SIDE / Math.sqrt(3.0);
 const RING_R = 67;
 const HANDLE_R = 8.35;
 const READOUT_CAP = 7.0;
+const READOUT_GAP = 8.0;
 
 const RECEPTOR_R = 29;
 const RECEPTOR_STROKE = 7.9;
@@ -27,10 +28,19 @@ const POLE_W = 5.3;
 const FLAG_W = 49.3;
 const FLAG_H = 22.9;
 
+// REFERENCE.md 4.4: a machined grey housing box, 30 x 32 u, with a slit at its mouth that
+// is brighter than the beam it feeds. Our beam's start cap is round and reaches ~44 u back
+// past the emitter origin, so the housing is drawn longer than the reference's 30 u —
+// otherwise the whole block would sit inside the cap and never be seen.
+const EMITTER_W = 32;
+const EMITTER_LEN = 46;
+const SLIT_SPAN = 29;
+
 const MAX_LIGHTS = 16;
 const PLACE_MS = 150;
 
 const TWO_PI = Math.PI * 2;
+const SQRT1_2 = Math.SQRT1_2;
 
 function srgbToLinear(c) {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
@@ -69,7 +79,7 @@ const BRICK_RIM = scene('#7F605D');
 const MORTAR = scene('#96706A');
 
 const HOUSING = scene('#4D4B50');
-const HOUSING_EDGE = scene('#7C7A82');
+const HOUSING_EDGE = scene('#8B8992');
 const SLIT = scene('#E0DEE1', 3.0);
 
 const MIRROR_BODY = scene('#8F9AA6', 0.85);
@@ -142,6 +152,10 @@ float vnoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }`;
 
+// Proximity lighting: REFERENCE.md 10.2 item 1. The reference spills no light at all onto
+// its brick; we accumulate a bounded set of nearby beam segments per fragment, each already
+// tinted by its own wavelength on the CPU side, with a cheap inverse-square-plus-exponential
+// falloff. Bounded at MAX_LIGHTS so the cost never scales with the number of traced segments.
 const LIGHT_BLOCK = `
 uniform int uLightCount;
 uniform vec4 uLightSeg[${MAX_LIGHTS}];
@@ -190,6 +204,8 @@ void main() {
   float fu = bu - bIdx * ${BRICK_LEN.toFixed(2)};
   float fv = v - course * ${COURSE_H.toFixed(2)};
 
+  // Every slab is keyed from the top-left: light face, mid, dark far face, then a narrow
+  // re-lit lip on the far edge. REFERENCE.md 2.2.
   vec3 col = mix(uLight, uMid, smoothstep(0.07, 0.36, t));
   col = mix(col, uDark, smoothstep(0.36, 0.72, t));
   col = mix(col, uRim, smoothstep(0.72, 0.87, t));
@@ -203,10 +219,12 @@ void main() {
   float detL = dot(det, vec3(0.299, 0.587, 0.114));
   col *= mix(1.0, 0.72 + 0.56 * detL, uDetailMix);
 
+  // Mortar is LIGHTER than the brick face, never darker. REFERENCE.md 2.2, ARCHITECTURE.md 11.8.
   float jx = min(fu, ${BRICK_LEN.toFixed(2)} - fu);
   float jy = min(fv, ${COURSE_H.toFixed(2)} - fv);
   float joint = 1.0 - min(smoothstep(0.0, ${JOINT_W.toFixed(2)}, jx), smoothstep(0.0, ${(JOINT_W * 0.85).toFixed(2)}, jy));
-  col = mix(col, uMortar * (0.80 + 0.45 * (1.0 - t)), joint * 0.82);
+  vec3 mortar = max(uMortar * (0.86 + 0.42 * (1.0 - t)), col * 1.12);
+  col = mix(col, mortar, joint * 0.85);
 
   vec2 nrm = mix(vec2(sign(vLocal.x), 0.0), vec2(0.0, sign(vLocal.y)), horiz);
   if (t < 0.5) nrm = -nrm;
@@ -222,25 +240,37 @@ void main() {
   fragColor = vec4(col * a, a);
 }`;
 
+// A machined block: flat fill, a one-unit lighter lip on the faces that point at the key
+// light, a darker one on the faces that turn away. uLitDir is the top-left key expressed in
+// the box's own rotated frame, so the shading stays anchored to the board, not to the sprite.
 const FS_BOX = `${FS_HEAD}
 uniform vec2 uSize;
 uniform vec3 uFill;
 uniform vec3 uEdge;
+uniform vec2 uLitDir;
+uniform float uLightGain;
 ${LIGHT_BLOCK}
 void main() {
   vec2 h = uSize * 0.5;
   vec2 d = abs(vLocal) - h;
   float sd = min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
   float a = aa(sd);
-  float bevel = smoothstep(0.0, 2.2, -sd);
-  float outline = smoothstep(2.6, 0.4, -sd);
-  vec3 col = mix(uEdge, uFill, bevel);
-  float lit = clamp((-vLocal.x - vLocal.y) / max(uSize.x + uSize.y, 1e-3) + 0.5, 0.0, 1.0);
-  col *= 0.72 + 0.62 * lit;
-  col = mix(col, uFill * 0.28, outline * 0.55);
-  col += uEdge * smoothstep(1.9, 0.9, -sd) * 0.55 * lit;
+  float inset = -sd;
+
+  vec2 face = d.x > d.y ? vec2(sign(vLocal.x), 0.0) : vec2(0.0, sign(vLocal.y));
+  float facing = clamp(-dot(face, uLitDir), 0.0, 1.0);
+
+  float along = clamp(dot(vLocal, uLitDir) / max(length(h), 1e-3), -1.0, 1.0);
+  vec3 col = uFill * (0.82 + 0.30 * (-along));
+
+  float lip = smoothstep(1.5, 0.2, inset) * facing;
+  col = mix(col, uEdge, lip * 0.90);
+
+  float shadowEdge = smoothstep(2.0, 0.3, inset) * (1.0 - facing);
+  col *= 1.0 - 0.45 * shadowEdge;
+
   vec2 nrm = normalize(vLocal + vec2(1e-4));
-  col += uFill * gatherLight(vBoard, nrm) * 1.2;
+  col += uFill * gatherLight(vBoard, nrm) * uLightGain;
   fragColor = vec4(col * a, a);
 }`;
 
@@ -402,6 +432,9 @@ void main() {
   fragColor = vec4(col * alpha + add * uAlpha * window(), alpha);
 }`;
 
+// No degree ticks. ARCHITECTURE.md section 11 item 4 and REFERENCE.md 10.1 item 13: a plain
+// hairline circle at about 30 % opacity plus the handle dot is what makes it read as an
+// instrument rather than a widget.
 const FS_PROTRACTOR = `${FS_HEAD}
 uniform float uR;
 uniform vec3 uColor;
@@ -412,18 +445,12 @@ void main() {
   float d = length(vLocal);
   float ring = exp(-pow((d - uR) / 1.05, 2.0));
 
-  float ang = atan(-vLocal.y, vLocal.x);
-  float k = ang / 0.2617993878;
-  float dk = abs(fract(k + 0.5) - 0.5);
-  float tickBand = smoothstep(uR - 5.4, uR - 4.2, d) * smoothstep(uR - 0.6, uR - 1.9, d);
-  float tick = smoothstep(0.055, 0.012, dk) * tickBand;
-
   float hd = length(vLocal - uHandle);
   float handle = smoothstep(${HANDLE_R.toFixed(2)}, ${(HANDLE_R - 1.1).toFixed(2)}, hd);
   float handleRing = smoothstep(${(HANDLE_R + 2.2).toFixed(2)}, ${HANDLE_R.toFixed(2)}, hd) * (1.0 - handle);
-  float handleHalo = exp(-max(hd - ${HANDLE_R.toFixed(2)}, 0.0) / 5.5) * 0.22;
+  float handleHalo = exp(-max(hd - ${HANDLE_R.toFixed(2)}, 0.0) / 5.5) * (0.17 + 0.11 * uSnap);
 
-  vec3 col = uColor * (ring + tick * (0.45 + 0.9 * uSnap));
+  vec3 col = uColor * ring;
   col += vec3(2.6, 2.55, 2.5) * handle + vec3(0.55) * handleHalo;
   col *= 1.0 - 0.55 * handleRing;
   fragColor = vec4(max(col, vec3(0.0)) * uAlpha * window(), 0.0);
@@ -729,6 +756,9 @@ export function createBoardRenderer(gl) {
     lightCount++;
   }
 
+  // Collapses the trace into at most MAX_LIGHTS segment lights: the longest, brightest white
+  // runs, then the spectral fan folded into seven wavelength bands so a whole rainbow costs
+  // seven lights instead of two hundred.
   function buildLights(level, state) {
     lightCount = 0;
     const explicit = state && Array.isArray(state.lights) ? state.lights : null;
@@ -871,38 +901,51 @@ export function createBoardRenderer(gl) {
     }
   }
 
+  // REFERENCE.md 4.4. The board's y axis grows downward and trace.js pushes the first ray
+  // along (cos dir, sin dir) in exactly that frame, so the housing has to sit at
+  // -(cos dir, sin dir) from the mouth. Getting this sign wrong buries the block inside the
+  // beam, which is what used to happen.
   function drawEmitter(level) {
     const e = level && level.emitter;
     if (!e) return;
     const dir = e.dir || 0;
-    const cx = Math.cos(dir);
-    const cy = -Math.sin(dir);
-    const halfLen = 18;
-    const halfAcross = 23;
-    const hx = e.x - cx * halfLen;
-    const hy = e.y - cy * halfLen;
+    const ca = Math.cos(dir);
+    const sa = Math.sin(dir);
+
+    const bx = e.x - ca * (EMITTER_LEN * 0.5);
+    const by = e.y - sa * (EMITTER_LEN * 0.5);
+
+    // The top-left key light, rotated into the housing's own frame so the lit lip stays on
+    // the board's top-left no matter which way the emitter points.
+    const lx = (ca + sa) * SQRT1_2;
+    const ly = (ca - sa) * SQRT1_2;
 
     const ub = use(progs.box);
-    gl.uniform2f(ub.uSize, halfLen * 2, halfAcross * 2);
+    gl.uniform2f(ub.uSize, EMITTER_LEN, EMITTER_W);
     gl.uniform3fv(ub.uFill, HOUSING);
     gl.uniform3fv(ub.uEdge, HOUSING_EDGE);
+    gl.uniform2f(ub.uLitDir, lx, ly);
+    // The housing is a machined block, not a lamp: it barely responds to its own beam.
+    gl.uniform1f(ub.uLightGain, 0.14);
     bindLights(ub);
-    place(ub, hx, hy, halfLen + 3, halfAcross + 3, -dir);
+    place(ub, bx, by, EMITTER_LEN / 2 + 5, EMITTER_W / 2 + 5, dir);
     drawQuad();
 
     const ug = use(progs.glow);
     gl.uniform2f(ug.uSpan, 0, 0);
-    gl.uniform1f(ug.uRadius, 42);
-    gl.uniform1f(ug.uPower, 3.0);
-    gl.uniform3f(ug.uColor, SLIT[0] * 0.13, SLIT[1] * 0.13, SLIT[2] * 0.14);
-    place(ug, e.x, e.y, 42, 42, 0);
+    gl.uniform1f(ug.uRadius, 39);
+    gl.uniform1f(ug.uPower, 3.2);
+    gl.uniform3f(ug.uColor, SLIT[0] * 0.10, SLIT[1] * 0.10, SLIT[2] * 0.11);
+    place(ug, e.x, e.y, 40, 40, 0);
     drawQuad();
 
+    // The mouth: brighter than the beam it feeds (0.88 against 0.78), drawn at the beam's
+    // full aperture height and perpendicular to the emitter direction.
     const us = use(progs.slit);
-    gl.uniform2f(us.uSpan, 0, 27);
+    gl.uniform2f(us.uSpan, 0, SLIT_SPAN);
     gl.uniform1f(us.uWidth, 2.6);
     gl.uniform3fv(us.uColor, SLIT);
-    place(us, e.x, e.y, 30, 52, -dir);
+    place(us, e.x, e.y, 26, SLIT_SPAN + 22, dir);
     drawQuad();
   }
 
@@ -1028,7 +1071,8 @@ export function createBoardRenderer(gl) {
       gl.uniform2f(ut.uSize, textHalfW * 2, textHalfH * 2);
       gl.uniform3fv(ut.uColor, READOUT);
       gl.uniform1f(ut.uAlpha, Math.min((scaleK - 0.88) / 0.12, 1));
-      place(ut, o.x, o.y - R - 14 - textHalfH, textHalfW, textHalfH, 0);
+      // Centred on the ring's centre, READOUT_GAP above the ring — not beside the handle.
+      place(ut, o.x, o.y - R - READOUT_GAP - textHalfH, textHalfW, textHalfH, 0);
       drawQuad();
     }
   }

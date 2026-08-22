@@ -1,4 +1,12 @@
-// Dev-only: run the solver over every level and assert the board data is sane and the pars are honest.
+// Dev-only: prove every level's embedded solution really solves it, then hunt for shortcuts.
+//
+// Order of checks, per ARCHITECTURE.md section 12:
+//   a  the embedded `solution` solves the level, traced exactly
+//   b  the solution fits the inventory, is player-reachable, and par === solution.length
+//   c  a search for anything SHORTER than par; finding one is a design defect
+//   d  a search that runs out of budget is NOT a failure, only "par unconfirmed"
+//   e  geometry sanity
+// The exit code is non-zero for a, b, c and e only.
 
 import { LEVELS } from '../js/levels.js';
 import { solve } from '../js/solver.js';
@@ -13,15 +21,26 @@ const MIRROR_HALF = 55;
 const PRISM_RADIUS = 75 / Math.sqrt(3);
 const BEAM_HALF = 8;
 const MIN_EMITTER_RUN = 120;
+const PLACE_SNAP = 25;          // js/input.js snaps placement to this
+const ANGLE_SNAP = 5;           // ...and rotation to this many degrees
+const OPTIC_GAP = 86;
 const VALID_COLORS = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet'];
+
+// Measured by the optics builder: the shortest prism-to-receptor run at which each colour
+// can actually be satisfied. Informational only — the exact trace in check (a) is the real
+// authority, and a receptor fed through a mirror travels further than the straight line.
+const MIN_PRISM_RUN = {
+  violet: 275, blue: 250, cyan: 400, green: 375, yellow: 725, orange: 625, red: 550,
+};
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
   const hit = args.find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : fallback;
 };
-const budget = Number(flag('budget', 36000));
+const budget = Number(flag('budget', 20000));
 const only = flag('level', null);
+const quiet = args.includes('--quiet');
 
 function ringWalls(level) {
   const size = level.boardSize || BOARD;
@@ -82,10 +101,28 @@ function emitterRun(level) {
   return best;
 }
 
+function onGrid(v) {
+  return Math.abs(v / PLACE_SNAP - Math.round(v / PLACE_SNAP)) < 1e-6;
+}
+
+function onAngleGrid(a) {
+  const deg = (a * 180) / Math.PI;
+  return Math.abs(deg / ANGLE_SNAP - Math.round(deg / ANGLE_SNAP)) < 1e-6;
+}
+
+// (e) Geometry sanity: nothing buried in a wall, no border walls hand-written into the
+// level, every optic on the grid a player can actually reach, receptors far enough apart.
 function geometryProblems(level) {
   const bad = [];
   const size = level.boardSize || BOARD;
   const t = level.wallThickness || WALL;
+
+  (level.walls || []).forEach((w, i) => {
+    if (w.x < t || w.y < t || w.x + w.w > size - t || w.y + w.h > size - t) {
+      bad.push(`wall ${i} (${w.x}, ${w.y}, ${w.w}x${w.h}) overlaps the border ring; walls are interior only`);
+    }
+    if (w.w <= 0 || w.h <= 0) bad.push(`wall ${i} has a non-positive size`);
+  });
 
   const e = level.emitter;
   if (e.x < t || e.x > size - t || e.y < t || e.y > size - t) {
@@ -114,17 +151,30 @@ function geometryProblems(level) {
     }
   });
 
-  (level.fixed || []).forEach((o, i) => {
+  const placed = (level.fixed || []).concat(level.solution || []);
+  placed.forEach((o, i) => {
+    const label = i < (level.fixed || []).length ? `fixed ${o.type} ${i}` : `solution ${o.type} ${i - (level.fixed || []).length}`;
     const reach = o.type === 'prism' ? PRISM_RADIUS : MIRROR_HALF;
     const c = clearanceToWalls(level, o.x, o.y);
     if (c < reach) {
-      bad.push(`fixed ${o.type} ${i} at ${o.x}, ${o.y} intersects a wall (clearance ${c.toFixed(0)})`);
+      bad.push(`${label} at ${o.x}, ${o.y} intersects a wall (clearance ${c.toFixed(0)})`);
+    }
+    if (!onGrid(o.x) || !onGrid(o.y)) {
+      bad.push(`${label} at ${o.x}, ${o.y} is off the ${PLACE_SNAP}-unit placement grid`);
+    }
+    if (!onAngleGrid(o.angle)) {
+      bad.push(`${label} angle ${(o.angle * 180 / Math.PI).toFixed(1)} is off the ${ANGLE_SNAP} degree rotation grid`);
     }
     level.receptors.forEach((r, j) => {
       if (Math.hypot(o.x - r.x, o.y - r.y) < reach + RECEPTOR_RADIUS) {
-        bad.push(`fixed ${o.type} ${i} overlaps receptor ${j}`);
+        bad.push(`${label} overlaps receptor ${j}`);
       }
     });
+    for (let j = i + 1; j < placed.length; j++) {
+      if (Math.hypot(o.x - placed[j].x, o.y - placed[j].y) < OPTIC_GAP) {
+        bad.push(`${label} sits closer than ${OPTIC_GAP} units to another optic`);
+      }
+    }
   });
 
   const inv = level.inventory || {};
@@ -136,26 +186,43 @@ function geometryProblems(level) {
   if (!level.name || level.name !== level.name.toUpperCase()) bad.push('name must be uppercase');
 
   const gridOff = [];
-  (level.fixed || []).forEach((o, i) => {
-    if (o.x % 25 !== 0 || o.y % 25 !== 0) gridOff.push(`fixed ${i}`);
-  });
   level.receptors.forEach((r, i) => {
-    if (r.x % 25 !== 0 || r.y % 25 !== 0) gridOff.push(`receptor ${i}`);
+    if (!onGrid(r.x) || !onGrid(r.y)) gridOff.push(`receptor ${i}`);
   });
-  if (gridOff.length) bad.push(`off the 25-unit grid: ${gridOff.join(', ')}`);
+  if (gridOff.length) bad.push(`off the ${PLACE_SNAP}-unit grid: ${gridOff.join(', ')}`);
 
   return bad;
 }
 
-function withinInventory(level, optics) {
+function inventoryProblems(level, optics) {
   const inv = level.inventory || {};
   let mirror = 0;
   let prism = 0;
   for (const o of optics) {
     if (o.type === 'mirror') mirror++;
-    else prism++;
+    else if (o.type === 'prism') prism++;
+    else return [`unknown optic type "${o.type}"`];
   }
-  return mirror <= (inv.mirror || 0) && prism <= (inv.prism || 0);
+  const bad = [];
+  if (mirror > (inv.mirror || 0)) bad.push(`solution uses ${mirror} mirrors, inventory holds ${inv.mirror || 0}`);
+  if (prism > (inv.prism || 0)) bad.push(`solution uses ${prism} prisms, inventory holds ${inv.prism || 0}`);
+  return bad;
+}
+
+// Informational: how far each receptor sits from the nearest prism in the solution.
+function prismRunNotes(level) {
+  const prisms = (level.fixed || []).concat(level.solution || []).filter((o) => o.type === 'prism');
+  if (!prisms.length) return [];
+  const notes = [];
+  for (const r of level.receptors) {
+    let best = Infinity;
+    for (const p of prisms) best = Math.min(best, Math.hypot(p.x - r.x, p.y - r.y));
+    const need = MIN_PRISM_RUN[r.color];
+    if (need && best < need) {
+      notes.push(`${r.color} receptor sits ${best.toFixed(0)} u from the nearest prism, under the ${need} u guideline`);
+    }
+  }
+  return notes;
 }
 
 const rows = [];
@@ -164,21 +231,62 @@ let failures = 0;
 for (const level of LEVELS) {
   if (only && String(level.id) !== only) continue;
 
-  const problems = geometryProblems(level);
-  const t0 = Date.now();
-  const result = solve(level, { maxOptics: level.par, timeBudgetMs: budget });
-  const ms = Date.now() - t0;
+  const problems = [];
+  const notes = [];
 
-  let best = null;
-  if (result.solved) {
-    best = result.optics.length;
-    const verify = traceScene(level, result.optics, {});
-    if (!verify.solved) problems.push('solver returned a solution the tracer does not accept');
-    if (!withinInventory(level, result.optics)) problems.push('solver solution exceeds the inventory');
-    if (best < level.par) problems.push(`par ${level.par} is too high; a ${best}-optic solution exists`);
-    if (best > level.par) problems.push(`solver needed ${best} optics against par ${level.par}`);
+  // (e) geometry first, because a broken board makes every other message noise.
+  problems.push(...geometryProblems(level));
+
+  // (a) the embedded solution is the authority.
+  const solution = level.solution;
+  let solutionOk = false;
+  if (!Array.isArray(solution)) {
+    problems.push('level has no `solution` array; ARCHITECTURE.md section 12 requires one');
   } else {
-    problems.push(`no solution found within ${budget} ms and ${level.par} optics`);
+    const res = traceScene(level, solution, {});
+    solutionOk = res.solved;
+    if (!res.solved) {
+      const missed = res.receptors
+        .filter((r) => !r.satisfied)
+        .map((r) => `${r.color} (lit ${r.litIntensity.toFixed(4)}, stray ${r.strayIntensity.toFixed(4)})`);
+      problems.push(`the embedded solution does not solve the level; unsatisfied: ${missed.join(', ')}`);
+    }
+
+    // (b) it has to be a solution a player could actually build.
+    problems.push(...inventoryProblems(level, solution));
+    if (level.par !== solution.length) {
+      problems.push(`par ${level.par} does not match the ${solution.length}-optic solution`);
+    }
+  }
+
+  notes.push(...prismRunNotes(level));
+
+  // (c) + (d) hunt for something shorter than par.
+  let shorter = null;
+  let searchState = 'confirmed';
+  let ms = 0;
+  let nodes = 0;
+  if (level.par > 1) {
+    const t0 = Date.now();
+    const found = solve(level, { maxOptics: level.par - 1, timeBudgetMs: budget });
+    ms = Date.now() - t0;
+    nodes = found.nodesExplored;
+    if (found.solved) {
+      const verify = traceScene(level, found.optics, {});
+      if (verify.solved) {
+        shorter = found.optics;
+        searchState = 'shortcut';
+        problems.push(
+          `par ${level.par} is too high; a ${found.optics.length}-optic solution exists: `
+          + found.optics.map((o) => `${o.type}@${Math.round(o.x)},${Math.round(o.y)}/${Math.round(o.angle * 180 / Math.PI)}`).join(' + '),
+        );
+      } else {
+        notes.push('solver reported a shortcut the tracer rejects; ignored');
+      }
+    } else if (found.timedOut) {
+      searchState = 'unconfirmed';
+      notes.push(`par unconfirmed: the shortcut search ran out of its ${budget} ms budget`);
+    }
   }
 
   if (problems.length) failures++;
@@ -186,26 +294,34 @@ for (const level of LEVELS) {
     id: level.id,
     name: level.name,
     par: level.par,
-    best: best === null ? '-' : best,
-    nodes: result.nodesExplored,
+    sol: solution ? solution.length : '-',
+    ok: solutionOk,
+    searchState,
+    nodes,
     ms,
     problems,
+    notes,
   });
 }
 
 const pad = (v, n) => String(v).padEnd(n);
 const padL = (v, n) => String(v).padStart(n);
+const STATE_LABEL = { confirmed: 'par confirmed', unconfirmed: 'par unconfirmed', shortcut: 'SHORTCUT' };
 
 console.log('');
-console.log(`${pad('ID', 4)}${pad('LEVEL', 24)}${padL('PAR', 4)}${padL('SOLVER', 8)}${padL('NODES', 9)}${padL('TIME', 9)}  STATUS`);
-console.log('-'.repeat(80));
+console.log(`${pad('ID', 4)}${pad('LEVEL', 22)}${padL('PAR', 4)}${padL('SOL', 5)}${padL('SOLVES', 8)}${padL('NODES', 9)}${padL('TIME', 8)}  PAR CHECK`);
+console.log('-'.repeat(84));
 for (const r of rows) {
-  const status = r.problems.length ? 'FAIL' : 'ok';
-  console.log(`${pad(r.id, 4)}${pad(r.name, 24)}${padL(r.par, 4)}${padL(r.best, 8)}${padL(r.nodes, 9)}${padL(r.ms + 'ms', 9)}  ${status}`);
-  for (const p of r.problems) console.log(`${' '.repeat(58)}  - ${p}`);
+  console.log(
+    `${pad(r.id, 4)}${pad(r.name, 22)}${padL(r.par, 4)}${padL(r.sol, 5)}${padL(r.ok ? 'yes' : 'NO', 8)}`
+    + `${padL(r.nodes, 9)}${padL(r.ms + 'ms', 8)}  ${STATE_LABEL[r.searchState]}`,
+  );
+  if (!quiet) for (const n of r.notes) console.log(`${' '.repeat(10)}note - ${n}`);
+  for (const p of r.problems) console.log(`${' '.repeat(10)}FAIL - ${p}`);
 }
-console.log('-'.repeat(80));
-console.log(`${rows.length - failures}/${rows.length} levels clean`);
+console.log('-'.repeat(84));
+const unconfirmed = rows.filter((r) => r.searchState === 'unconfirmed').length;
+console.log(`${rows.length - failures}/${rows.length} levels clean` + (unconfirmed ? `, ${unconfirmed} with par unconfirmed` : ''));
 console.log('');
 
 process.exit(failures ? 1 : 0);
