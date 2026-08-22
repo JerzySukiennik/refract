@@ -1,7 +1,7 @@
 {
   "project": "REFRACT",
   "tagline": "Steering and dispersing light. Built against a reference, round by round.",
-  "updated": "2026-08-22T18:30:00Z",
+  "updated": "2026-08-22T21:42:06.417392Z",
   "verdictLegend": {
     "reference": "The blind critic picked the reference as the polished commercial game. We lost the round.",
     "ours": "The blind critic picked ours as the polished commercial game. We won the round.",
@@ -14,9 +14,36 @@
       "title": "Reference teardown & architecture",
       "status": "done",
       "verdict": "pending",
-      "summary": "Measured the 38 reference frames plus 150 dense frames at 4 fps into a numbers-first spec. Wrote the binding module contract: 1000x1000 board units, WebGL2 HDR pipeline for the board, DOM chrome for the HUD, physical Sellmeier dispersion rather than a fake rainbow gradient.",
+      "summary": "Measured the 38 reference frames plus 150 dense frames at 4 fps into a 979-line numbers-first spec \u2014 every claim carrying a pixel measurement. Wrote the binding module contract: 1000x1000 board units, WebGL2 HDR pipeline for the board, DOM chrome for the HUD, physical Sellmeier dispersion rather than a faked rainbow gradient. The teardown found three real errors in my own contract and I took all three: walls are 40 units not 30, the angle readout needs no clockwise conversion, and emitters are free-standing housings rather than wall fixtures.",
       "gap": "Nothing built yet.",
       "shots": []
+    },
+    {
+      "n": 1,
+      "title": "Nine builders in parallel",
+      "status": "done",
+      "verdict": "pending",
+      "summary": "Nine agents wrote the codebase simultaneously against the contract, none seeing another's code: optics core, WebGL2 HDR renderer, beam shader, board art, HUD, 24 original levels, audio, multiplayer. The optics suite came back 32/32 green with a 0.58 ms trace, including the test that matters most \u2014 red deviating less than violet. Levels are ours: FIRST LIGHT, SWITCHBACK, THE COMB, CATHEDRAL, TERMINUS. Nothing from the reference's map.",
+      "gap": "Written but never once run. Integration died on a connection error and every agent that tried to capture evidence stalled.",
+      "shots": []
+    },
+    {
+      "n": 2,
+      "title": "First light",
+      "status": "done",
+      "verdict": "pending",
+      "summary": "The whole pipeline had been stalling on a broken screenshot harness: npm blocks puppeteer's postinstall here so Chrome was never downloaded, and my own wait predicate returned a Promise that resolved to undefined, so it polled forever. With those fixed, three real integration bugs surfaced in minutes \u2014 a texture unwrapped by the wrong key, and post-process parameters passed as scalars into an API expecting groups, which drove chromatic aberration 167x past its measured value and turned the brick neon. First real frame below.",
+      "gap": "No emitter housing, no inventory dock, the title shows the game's name instead of the level's, and par reads 0. Levels validate 8 of 24.",
+      "shots": [
+        {
+          "src": "shots/r0-first-render.png",
+          "caption": "First frame that rendered correctly"
+        },
+        {
+          "src": "shots/r0-beam-detail.png",
+          "caption": "Beam detail \u2014 chiral fringe working"
+        }
+      ]
     }
   ]
 }
