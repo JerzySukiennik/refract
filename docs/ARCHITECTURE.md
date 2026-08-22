@@ -69,8 +69,13 @@ tools/                dev-only scripts (screenshot capture, level validation)
 
 - Logical board space: **1000 × 1000 units**, origin top-left, +x right, +y down.
 - Design grid: **50 units** per cell → 20 × 20 cells. Optics snap to 25-unit half-cells.
-- Outer wall ring is **30 units** thick, occupying the border of the 1000×1000 box.
-  Playable interior is therefore `[30, 970] × [30, 970]`.
+- Outer wall ring is **40 units** thick, occupying the border of the 1000×1000 box.
+  Playable interior is therefore `[40, 960] × [40, 960]`. Interior ledges use the same
+  40-unit thickness — the reference makes no distinction. (Measured at 38.7 u; rounded to
+  40 for grid sanity. A 30 u wall reads visibly flimsy — see `docs/REFERENCE.md` §1.2.)
+- The board is centred horizontally in the viewport but centred vertically in
+  `viewportHeight − dockHeight`, so it sits slightly above true centre, as the reference
+  does, leaving room for the inventory dock.
 - The canvas is a square that fits the viewport with margin; `render/gl.js` owns the
   board→pixel transform and exposes it. UI code must never hardcode pixel positions
   of board features — ask the transform.
@@ -84,9 +89,9 @@ tools/                dev-only scripts (screenshot capture, level validation)
 // A level (js/levels.js) — pure data, no functions.
 {
   id: 13,
-  name: 'THE LONG SPECTRUM',
+  name: 'SLOW WATER',                            // OUR name. Never reuse a reference name.
   par: 5,
-  emitter: { x: 30, y: 175, dir: 0 },            // dir in radians, beam leaves this way
+  emitter: { x: 40, y: 175, dir: 0 },            // dir in radians, beam leaves this way
   walls: [ { x, y, w, h } ],                     // axis-aligned, board units, interior only
   receptors: [ { x, y, color: 'blue' } ],        // color ∈ 'red'|'orange'|'yellow'|'green'|'cyan'|'blue'|'violet'
   inventory: { mirror: 4, prism: 1 },
