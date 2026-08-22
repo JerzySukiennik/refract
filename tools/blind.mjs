@@ -37,6 +37,7 @@ const key = { seed, generatedAt: new Date().toISOString(), pairs: [] };
 for (const name of scenes) {
   const scene = SCENES[name];
   if (!scene) { console.error(`unknown scene: ${name}`); continue; }
+  if (!scene.ref) { console.log(`skip  ${name} (ours alone, no reference counterpart)`); continue; }
 
   const ours = path.join(shotsDir, `${prefix ? prefix + '-' : ''}${name}.png`);
   const ref = path.join(ROOT, 'reference/frames', scene.ref);

@@ -15,6 +15,15 @@ Solo + realtime multiplayer (shared board, named cursors).
 Target quality bar: the reference frames in `reference/frames/` and `reference/dense/`.
 Beating them is the goal, matching them is the floor.
 
+**THIS IS NOT A CLONE.** Decided by Jurek, 2026-08-22: *"to nie powinno być 1:1! Zrób
+takie działanie ale mapy mogą być inne."* We reproduce the **mechanic** and the **craft**.
+The **maps are ours** — all 24 levels are original designs with original names. Do not
+reconstruct the reference's "LEVEL 13 — THE LONG SPECTRUM" layout and do not reuse its
+name. Copy the reference's beam physics, bloom falloff, dispersion, lighting and
+restraint; do not copy its geometry. Where our own art direction beats the reference,
+take it. Full detail: `docs/ORCHESTRATOR-NOTES.md` section 8 — **read that file, it is
+binding**.
+
 ## 1. Stack & constraints
 
 - Vanilla **ES modules**, no build step, no bundler, no framework. `<script type="module">`.
@@ -266,12 +275,26 @@ window.REFRACT = {
   state,                             // live reference to js/state.js state
   frames(n): Promise<void>,          // await n rendered frames (for settling animations)
   settle(): Promise<void>,           // await all springs at rest, then 2 more frames
+  script(name): Promise<void>,       // named capture setups, see below
+  fps,                               // rolling average frame rate, for the harness
 };
 ```
 
 Levels, positions and angles passed through this API bypass inventory limits so that a
 capture can compose any board state. It must be inert for normal players — it only reads
 and writes state that the player could also reach.
+
+`script(name)` composes a board state by asking `solver.js` for a real solution to a real
+level, never by hardcoding coordinates, so redesigning a level cannot break the capture
+harness. Required names:
+
+```
+'folding'      a level needing 3+ mirrors; solution placed, last mirror selected mid-drag
+'dispersion'   a level with a prism; solution placed except the final optic, fan in the open
+'protractor'   one mirror alone in open board, selected, in rotate-drag
+'solved'       a complete solution, every receptor satisfied
+'multiplayer'  three fake remote players with names and cursor positions on the board
+```
 
 ## 10. Screenshot harness
 

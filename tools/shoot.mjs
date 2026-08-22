@@ -99,10 +99,10 @@ for (const name of scenes) {
     R.select(null);
     for (const op of ops) {
       if (op.level !== undefined) { R.setLevel(op.level); R.clearOptics(); }
+      if (op.scripted) await R.script(op.scripted);
       if (op.place) { const id = R.place(op.place); if (op.select) R.select(id); }
       if (op.drag) R.setDrag(true);
       if (op.cursor) R.setCursor(op.cursor[0], op.cursor[1]);
-      if (op.solve) R.solveNow ? R.solveNow() : null;
       if (op.modal) R.showModal(op.modal);
     }
     await R.settle();

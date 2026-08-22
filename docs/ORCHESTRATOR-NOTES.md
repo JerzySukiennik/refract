@@ -74,3 +74,33 @@ The reference cursor is a blue-filled arrow with a white outline, an open blue h
 dragging out of the dock, and a blue pointing hand over buttons. Our Kenney set is white
 with a dark outline; tint the fill to match this blue for the local player, and give each
 remote player a different fill colour from the same family.
+
+---
+
+## 8. THIS IS NOT A CLONE — decided by Jurek, 2026-08-22
+
+Explicit instruction: *"to nie powinno być 1:1! Zrób takie działanie ale mapy mogą być
+inne."* The **mechanic** is what we reproduce — a white beam, mirrors that steer it,
+prisms that split it into a real dispersed spectrum, three coloured receptors that each
+need their own colour, an inventory with a par count. The **maps are ours**.
+
+What this changes:
+
+- **Levels are original.** All 24 are our own design. Do not reconstruct the reference's
+  "LEVEL 13 — THE LONG SPECTRUM" layout, and do not use its name. Our levels get our
+  names and our geometry. This was already the brief for the levels builder; it is now
+  binding for everyone.
+- **The reference is a QUALITY BAR, not a template.** We copy craft: the beam's physical
+  profile, the chiral warm/cool fringe, the bloom falloff, the dispersion physics, the
+  restraint of the chrome, the sense that the board is a lit physical object. We do not
+  copy its wall positions, its level, or its exact HUD arrangement.
+- **The blind comparison changes shape.** Because the layouts differ, the critic can no
+  longer be asked "which panel is the same frame". The question becomes: *"one of these
+  two screenshots is from a polished commercial puzzle game and one is from an amateur
+  build — which is which, and what gave it away?"* That is a harder and more honest test
+  than layout matching, and it is the test we now run. The scenes must therefore be
+  matched by KIND — a long straight beam against a long straight beam, a dispersion fan
+  against a dispersion fan, a selection protractor against a selection protractor — not
+  by layout.
+- **We are free to be better-looking.** Anywhere our own art direction beats the
+  reference, take it. Section 5 lists where the reference is already weak.

@@ -113,8 +113,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const VERDICT_LABEL = {
-  ours: 'Ours picked as real',
-  reference: 'Reference picked as real',
+  ours: 'Ours judged the polished one',
+  reference: 'Reference judged the polished one',
   tie: 'Indistinguishable',
   pending: 'In flight'
 };

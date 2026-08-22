@@ -1,99 +1,126 @@
-// Capture scenes. Each mirrors a specific reference frame so blind comparisons line up.
-// A scene is driven through window.REFRACT inside the page.
+// Capture scenes for the blind quality comparison.
+//
+// IMPORTANT: these run on OUR OWN levels. Refract is not a clone of the reference
+// footage — see docs/ORCHESTRATOR-NOTES.md section 8. Scenes are matched to reference
+// frames by KIND, not by layout: a long straight beam is compared against a long
+// straight beam, a dispersion fan against a dispersion fan, and so on. The critic is
+// asked which panel is the polished commercial game, not which panel is the same frame.
+//
+// `ops` are driven through window.REFRACT (docs/ARCHITECTURE.md section 9). They are
+// CALIBRATED against the real levels by the capture agent each round — if a level's
+// geometry changes and a scene stops showing what it is supposed to show, fix the ops
+// here rather than reverting the level.
 
 export const SCENES = {
-  // ref_001.jpg — level loaded, untouched, single straight beam from the emitter.
+  // A clean, untouched level: the emitter and one long unobstructed beam run.
+  // Tests: beam core profile, chiral warm/cool fringe, grain, bloom, emitter mouth.
   fresh: {
     ref: 'ref_001.jpg',
-    note: 'Level 13 loaded, no optics placed, straight beam across the top corridor.',
-    ops: [{ level: 12 }],
+    kind: 'A loaded level with a single long straight beam and nothing placed yet.',
+    note: 'Beam core, shoulders, fringe chirality and bloom on a long clean run.',
+    ops: [{ level: 0 }],
   },
 
-  // ref_010.jpg — two mirrors folding the beam, third mirror selected mid-rotation.
-  folding: {
-    ref: 'ref_010.jpg',
-    note: 'Beam folded twice, a third mirror selected showing the protractor ring.',
-    ops: [
-      { level: 12 },
-      { place: { type: 'mirror', x: 800, y: 195, angle: Math.PI * 0.25 } },
-      { place: { type: 'mirror', x: 800, y: 420, angle: Math.PI * 0.75 } },
-      { place: { type: 'mirror', x: 215, y: 400, angle: Math.PI * 0.25 }, select: true },
-      { drag: true },
-      { cursor: [200, 430] },
-    ],
-  },
-
-  // ref_020.jpg / ref_030.jpg — the prism throwing a full dispersed fan at the receptors.
-  dispersion: {
-    ref: 'ref_030.jpg',
-    note: 'Prism in the folded beam, full rainbow fan reaching the three receptors.',
-    ops: [
-      { level: 12 },
-      { place: { type: 'mirror', x: 800, y: 195, angle: Math.PI * 0.25 } },
-      { place: { type: 'mirror', x: 800, y: 420, angle: Math.PI * 0.75 } },
-      { place: { type: 'mirror', x: 215, y: 400, angle: Math.PI * 0.25 } },
-      { place: { type: 'prism', x: 300, y: 545, angle: 0.35 } },
-    ],
-  },
-
-  // Close crop on the prism output — judges dispersion smoothness, banding, hue order.
-  fanDetail: {
-    ref: 'ref_030.jpg',
-    note: 'Tight crop on the prism and its fan. Banding and hue order are the test.',
-    crop: { x: 0.18, y: 0.42, w: 0.66, h: 0.48 },
-    ops: [
-      { level: 12 },
-      { place: { type: 'mirror', x: 800, y: 195, angle: Math.PI * 0.25 } },
-      { place: { type: 'mirror', x: 800, y: 420, angle: Math.PI * 0.75 } },
-      { place: { type: 'mirror', x: 215, y: 400, angle: Math.PI * 0.25 } },
-      { place: { type: 'prism', x: 300, y: 545, angle: 0.35 } },
-    ],
-  },
-
-  // Close crop on a long straight white beam — judges core, amber shoulders, grain, bloom.
+  // Same, cropped hard onto the beam itself.
   beamDetail: {
     ref: 'ref_001.jpg',
-    note: 'Tight crop on the emitter and the long white beam. Core profile is the test.',
+    kind: 'Tight crop on the emitter and a long white beam.',
+    note: 'Cross-section profile is the whole test. Core width, shoulder falloff, fringe.',
     crop: { x: 0.08, y: 0.08, w: 0.62, h: 0.24 },
-    ops: [{ level: 12 }],
+    ops: [{ level: 0 }],
   },
 
-  // The selection protractor, alone, at high zoom.
+  // Several mirrors folding the beam through the maze.
+  // Tests: reflections, hot spots at mirror faces, wall light spill, mirror sprites.
+  folding: {
+    ref: 'ref_010.jpg',
+    kind: 'Beam folded several times by mirrors, one mirror selected mid-rotation.',
+    note: 'Reflection hot spots, mirror sprite, wall glow, protractor in context.',
+    ops: [{ scripted: 'folding' }],
+  },
+
+  // A prism throwing a full dispersed fan.
+  // Tests: hue order, angular spread, continuity, Fresnel residuals, glass body.
+  dispersion: {
+    ref: 'ref_030.jpg',
+    kind: 'A prism in the beam throwing a full rainbow fan across open board.',
+    note: 'The signature shot. Fan width, smoothness, hue order, prism glass.',
+    ops: [{ scripted: 'dispersion' }],
+  },
+
+  // Same, cropped onto the fan.
+  fanDetail: {
+    ref: 'ref_030.jpg',
+    kind: 'Tight crop on a prism and its fan.',
+    note: 'Banding is the failure mode. Must read as one continuous wedge.',
+    crop: { x: 0.18, y: 0.42, w: 0.66, h: 0.48 },
+    ops: [{ scripted: 'dispersion' }],
+  },
+
+  // The selection protractor at high zoom.
   protractor: {
     ref: 'ref_010.jpg',
-    note: 'Selected mirror with protractor ring, handle dot and angle readout.',
+    kind: 'A selected optic with its protractor ring, handle and angle readout.',
+    note: 'Ring radius, stroke, opacity, ticks, handle dot, readout typography.',
     crop: { x: 0.06, y: 0.26, w: 0.42, h: 0.34 },
-    ops: [
-      { level: 12 },
-      { place: { type: 'mirror', x: 215, y: 400, angle: Math.PI * 0.25 }, select: true },
-      { drag: true },
-      { cursor: [200, 430] },
-    ],
+    ops: [{ scripted: 'protractor' }],
   },
 
-  // Receptors lit.
+  // All three receptors satisfied, board still visible.
   solvedBoard: {
     ref: 'ref_034.jpg',
-    note: 'All three receptors satisfied, before the SOLVED overlay.',
-    ops: [{ level: 12 }, { solve: true }],
+    kind: 'All three receptors receiving their colour, before any overlay.',
+    note: 'Receptor lit state, flags, colour spill onto the board.',
+    ops: [{ scripted: 'solved' }],
   },
 
-  // The SOLVED overlay.
+  // The solve overlay.
   solvedModal: {
     ref: 'ref_038.jpg',
-    note: 'SOLVED panel over the dimmed board.',
-    ops: [{ level: 12 }, { solve: true }, { modal: 'solved' }],
+    kind: 'The solve panel over a dimmed board.',
+    note: 'Panel typography, dim amount, panel border, button treatment.',
+    ops: [{ scripted: 'solved' }, { modal: 'solved' }],
   },
 
-  // HUD chrome only — typography, chips, dock.
+  // Chrome only.
   hud: {
     ref: 'ref_001.jpg',
-    note: 'Chrome: title block, button row, inventory dock, used/par readout.',
-    ops: [{ level: 12 }],
+    kind: 'Full frame with the chrome visible.',
+    note: 'Title block, button row, inventory dock, used/par, hint line.',
+    ops: [{ level: 0 }],
+  },
+
+  // Our own additions — no reference counterpart, judged on their own merit.
+  levelsGrid: {
+    ref: null,
+    kind: 'The level select grid.',
+    note: 'Ours alone. Judged against the game\'s own visual language, not the reference.',
+    ops: [{ level: 0 }, { modal: 'levels' }],
+  },
+
+  multiplayer: {
+    ref: null,
+    kind: 'A room with several named remote cursors on the board.',
+    note: 'Ours alone. Cursor art, name labels, ownership tinting.',
+    ops: [{ scripted: 'multiplayer' }],
   },
 };
 
+// Scripted setups live in the page so they can query the real level geometry instead of
+// hardcoding coordinates that break whenever a level is redesigned. window.REFRACT must
+// expose `script(name)` implementing each of these:
+//
+//   'folding'      pick a level whose solution needs 3+ mirrors, place them along the
+//                  known solution, leave the last one selected and mid-drag
+//   'dispersion'   pick a level with a prism, place the full solution except the final
+//                  optic, so the fan is thrown across open space
+//   'protractor'   place a single mirror in open board, select it, enter rotate-drag
+//   'solved'       place a complete solution so every receptor is satisfied
+//   'multiplayer'  inject three fake remote players with names and cursor positions
+//
+// Implement them by asking solver.js for a solution rather than by hardcoding numbers.
+
 export const DEFAULT_SCENES = [
-  'fresh', 'folding', 'dispersion', 'fanDetail', 'beamDetail',
-  'protractor', 'solvedBoard', 'solvedModal',
+  'fresh', 'beamDetail', 'folding', 'dispersion', 'fanDetail',
+  'protractor', 'solvedBoard', 'solvedModal', 'hud', 'levelsGrid',
 ];
