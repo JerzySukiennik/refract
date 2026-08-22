@@ -101,6 +101,7 @@ tools/                dev-only scripts (screenshot capture, level validation)
   inventory: { mirror: 4, prism: 1 },
   fixed: [ { type:'mirror'|'prism', x, y, angle } ], // pre-placed, not removable
   hint: 'One prism, late.',
+  solution: [ { type:'mirror', x, y, angle } ],  // REQUIRED. The author's known solution.
 }
 
 // A placed optic (runtime, in state).
@@ -368,3 +369,27 @@ Binding. Where this section and an earlier section disagree, this section wins.
 - **The hint line clear of the brick**, on its own row, at readable contrast.
 - **Receptor spacing snapped to the grid.** The reference's is irregular for no reason.
 - **A very light volumetric haze** so beams read as occupying air.
+
+
+## 12. Levels must carry their own solution
+
+Blind search is not a sufficient validator. `solver.js` discretises position and angle, so
+a level can be perfectly solvable by a human and still time out the search — that is a
+solver limitation being reported as a level defect, and it wasted a full round.
+
+Therefore **every level carries a `solution` array**: the author's actual working placement,
+in the same shape as `fixed`. `tools/validate-levels.mjs` must then check, in this order:
+
+1. **The embedded solution really solves the level.** Load it, trace it, assert every
+   receptor is satisfied. This is the authoritative test and it is exact, fast and
+   deterministic. A level whose embedded solution does not solve is a broken level.
+2. **The solution fits the inventory**, and `par === solution.length`.
+3. **Search for something shorter.** If the solver finds a solution using fewer optics
+   than `par`, that is a design defect — lower `par` to what the solver found, or change
+   the geometry so the shortcut closes. Report it, do not silently accept it.
+4. **Search timing out is NOT a failure.** Report it as `par unconfirmed` and move on. The
+   embedded solution already proved solvability.
+5. Geometry sanity: nothing embedded in a wall, every receptor reachable, the emitter's
+   first ray actually enters the play area.
+
+The exit code is non-zero only for checks 1, 2, 3 and 5.

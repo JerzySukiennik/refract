@@ -1,0 +1,79 @@
+REFRACT — audio credits
+=======================
+
+All sampled audio in this folder is from Kenney (kenney.nl), released under
+Creative Commons Zero (CC0 1.0 Universal). Public domain, no attribution
+required — kept here anyway because credit is cheap and correct.
+
+The beam hum, rotation ticks, receptor bells, the solve chord and its sparkle
+are NOT samples: they are synthesised at runtime in js/audio.js with the Web
+Audio API, so they can respond continuously to game state.
+
+Sample sources
+--------------
+File in this folder        Kenney pack              Original file
+-------------------------  -----------------------  -------------------------
+beam_on.ogg                Sci-Fi Sounds            forceField_000.ogg
+beam_off.ogg               Digital Audio            lowDown.ogg
+error.ogg                  Interface Sounds         error_002.ogg
+error_b.ogg                Interface Sounds         error_006.ogg
+hint.ogg                   Interface Sounds         question_002.ogg
+level_start.ogg            Interface Sounds         maximize_006.ogg
+modal_open.ogg             Interface Sounds         open_002.ogg
+modal_close.ogg            Interface Sounds         close_001.ogg
+pick.ogg                   Interface Sounds         click_002.ogg
+pick_b.ogg                 Interface Sounds         click_004.ogg
+pick_c.ogg                 Interface Sounds         click_005.ogg
+place.ogg                  Interface Sounds         drop_002.ogg
+place_b.ogg                Interface Sounds         drop_003.ogg
+place_c.ogg                Interface Sounds         drop_004.ogg
+place_glass_a.ogg          Impact Sounds            impactGlass_light_000.ogg
+place_glass_b.ogg          Impact Sounds            impactGlass_light_002.ogg
+place_glass_c.ogg          Impact Sounds            impactGlass_light_004.ogg
+player_join.ogg            Interface Sounds         confirmation_003.ogg
+receptor.ogg               Interface Sounds         confirmation_002.ogg
+remove_a.ogg               Interface Sounds         close_002.ogg
+remove_b.ogg               Interface Sounds         close_004.ogg
+reset.ogg                  Interface Sounds         minimize_006.ogg
+solve_swell.ogg            Sci-Fi Sounds            forceField_002.ogg
+tick.ogg                   Interface Sounds         tick_002.ogg
+ui_back.ogg                Interface Sounds         back_002.ogg
+ui_click.ogg               UI Audio                 click1.ogg
+ui_click_b.ogg             UI Audio                 click3.ogg
+ui_hover.ogg               UI Audio                 rollover2.ogg
+ui_hover_b.ogg             UI Audio                 rollover4.ogg
+ui_hover_c.ogg             UI Audio                 rollover6.ogg
+ui_select.ogg              Interface Sounds         select_005.ogg
+ui_switch.ogg              UI Audio                 switch2.ogg
+ui_switch_b.ogg            Interface Sounds         toggle_002.ogg
+undo.ogg                   Interface Sounds         back_003.ogg
+
+Packs used: Kenney UI Audio, Kenney Interface Sounds, Kenney Digital Audio,
+Kenney Sci-Fi Sounds, Kenney Impact Sounds.
+
+Original Kenney license text follows.
+
+---------------------------------------------------------------------------
+
+	
+
+	Interface Sounds (1.0)
+
+	Created/distributed by Kenney (www.kenney.nl)
+	Creation date: 11-02-2020
+
+			------------------------------
+
+	License: (Creative Commons Zero, CC0)
+	http://creativecommons.org/publicdomain/zero/1.0/
+
+	This content is free to use in personal, educational and commercial projects.
+	Support us by crediting Kenney or www.kenney.nl (this is not mandatory)
+
+			------------------------------
+
+	Donate:   http://support.kenney.nl
+	Patreon:  http://patreon.com/kenney/
+
+	Follow on Twitter for updates:
+	http://twitter.com/KenneyNL

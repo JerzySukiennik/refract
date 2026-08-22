@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" data-cursor="idle" data-cursor-mode="native">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>REFRACT</title>
+<meta name="description" content="A puzzle of light. Steer a white beam through a walled maze with mirrors, split it into a real dispersed spectrum with prisms, and feed every receptor its own colour.">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="REFRACT">
+<meta name="format-detection" content="telephone=no">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="REFRACT">
+<meta property="og:title" content="REFRACT — a puzzle of light">
+<meta property="og:description" content="Steer a white beam through a walled maze with mirrors, split it into a real dispersed spectrum with prisms, and feed every receptor its own colour.">
+<meta property="og:url" content="https://refract.gzowo.fun/">
+<meta property="og:image" content="https://refract.gzowo.fun/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="REFRACT — a puzzle of light">
+<meta name="twitter:description" content="Mirrors steer it. Prisms break it apart. Three receptors want their own colour.">
+<meta name="twitter:image" content="https://refract.gzowo.fun/assets/og.png">
+
+<link rel="canonical" href="https://refract.gzowo.fun/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Cpath d='M4 16h9' stroke='%23fff' stroke-width='2.4'/%3E%3Cpath d='M16 6 L24 22 L8 22 Z' fill='none' stroke='%238d8f98' stroke-width='1.6'/%3E%3Cpath d='M19 16h9' stroke='%23ff4d3d' stroke-width='1.6'/%3E%3Cpath d='M19 19.5h9' stroke='%2338d66a' stroke-width='1.6'/%3E%3Cpath d='M19 12.5h9' stroke='%232e7bff' stroke-width='1.6'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap">
+<link rel="stylesheet" href="css/ui.css">
+</head>
+<body>
+
+<canvas id="board" aria-label="Light puzzle board"></canvas>
+
+<div id="hud" aria-live="off">
+
+  <div class="hud-top">
+    <header class="title-block">
+      <p class="level-tag" id="level-tag">LEVEL 01</p>
+      <h1 class="level-name" id="level-name">REFRACT</h1>
+    </header>
+
+    <nav class="chip-row" id="chip-row" aria-label="Game controls">
+      <button type="button" class="chip" data-action="reset">RESET</button>
+      <button type="button" class="chip" data-action="hint" aria-pressed="false">HINT</button>
+      <button type="button" class="chip" data-action="levels">LEVELS</button>
+      <button type="button" class="chip chip-sound" data-action="sound" aria-pressed="true"><i class="chip-dot" aria-hidden="true"></i>SOUND</button>
+      <button type="button" class="chip" data-action="room">ROOM</button>
+    </nav>
+  </div>
+
+  <p class="hint-line" id="hint-line"></p>
+
+  <footer class="dock-zone">
+    <p class="readout" id="readout"><span class="readout-used">USED 0</span><span class="readout-sep">·</span><span class="readout-par">PAR 0</span></p>
+    <div class="dock" id="dock" role="group" aria-label="Inventory"></div>
+  </footer>
+
+</div>
+
+<div id="remote-layer" aria-hidden="true"></div>
+<div id="modal-root" aria-live="polite"></div>
+<div id="cursor-layer" aria-hidden="true"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

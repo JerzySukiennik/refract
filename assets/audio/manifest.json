@@ -1,0 +1,286 @@
+{
+  "version": 1,
+  "master": {
+    "gain": 0.85,
+    "fade": 0.35,
+    "voiceCap": 24,
+    "synthCap": 160
+  },
+  "buses": {
+    "sfx": 1.0,
+    "tone": 0.9,
+    "hum": 1.0,
+    "reverb": 0.55
+  },
+  "aliases": {
+    "click": "ui_click",
+    "hover": "ui_hover",
+    "select": "ui_select",
+    "toggle": "ui_switch",
+    "back": "ui_back",
+    "open": "modal_open",
+    "close": "modal_close",
+    "drop": "place",
+    "invalid": "error",
+    "rotate": "rotate_tick",
+    "chime": "receptor_chime",
+    "beamOn": "beam_on",
+    "beamOff": "beam_off"
+  },
+  "sounds": {
+    "ui_hover": {
+      "files": ["ui_hover.ogg", "ui_hover_b.ogg", "ui_hover_c.ogg"],
+      "gain": 0.26,
+      "pitch": [0.94, 1.08],
+      "jitter": 0.16,
+      "cooldown": 45,
+      "bus": "sfx",
+      "send": 0.0
+    },
+    "ui_click": {
+      "files": ["ui_click.ogg", "ui_click_b.ogg"],
+      "gain": 0.4,
+      "pitch": [0.96, 1.05],
+      "jitter": 0.1,
+      "cooldown": 40,
+      "bus": "sfx",
+      "send": 0.05
+    },
+    "ui_select": {
+      "files": ["ui_select.ogg"],
+      "gain": 0.3,
+      "pitch": [0.97, 1.06],
+      "jitter": 0.1,
+      "cooldown": 45,
+      "bus": "sfx",
+      "send": 0.08
+    },
+    "ui_switch": {
+      "files": ["ui_switch.ogg", "ui_switch_b.ogg"],
+      "gain": 0.34,
+      "pitch": [0.97, 1.04],
+      "jitter": 0.08,
+      "cooldown": 80,
+      "bus": "sfx",
+      "send": 0.05
+    },
+    "ui_back": {
+      "files": ["ui_back.ogg"],
+      "gain": 0.32,
+      "pitch": [0.95, 1.05],
+      "jitter": 0.1,
+      "cooldown": 60,
+      "bus": "sfx",
+      "send": 0.05
+    },
+    "tick": {
+      "files": ["tick.ogg"],
+      "gain": 0.22,
+      "pitch": [0.9, 1.12],
+      "jitter": 0.18,
+      "cooldown": 25,
+      "bus": "sfx",
+      "send": 0.0
+    },
+    "pick": {
+      "files": ["pick.ogg", "pick_b.ogg", "pick_c.ogg"],
+      "gain": 0.34,
+      "pitch": [0.88, 1.1],
+      "jitter": 0.15,
+      "cooldown": 45,
+      "bus": "sfx",
+      "send": 0.06,
+      "accent": { "type": "blip", "f0": 360, "f1": 540, "dur": 0.07, "gain": 0.05, "wave": "sine" }
+    },
+    "place": {
+      "files": ["place.ogg", "place_b.ogg", "place_c.ogg"],
+      "gain": 0.32,
+      "pitch": [0.9, 1.09],
+      "jitter": 0.16,
+      "cooldown": 55,
+      "bus": "sfx",
+      "send": 0.14,
+      "accent": { "type": "blip", "f0": 520, "f1": 300, "dur": 0.09, "gain": 0.055, "wave": "sine" }
+    },
+    "place_prism": {
+      "files": ["place_glass_a.ogg", "place_glass_b.ogg", "place_glass_c.ogg"],
+      "gain": 0.26,
+      "pitch": [0.86, 1.08],
+      "jitter": 0.16,
+      "cooldown": 55,
+      "bus": "sfx",
+      "send": 0.22,
+      "accent": { "type": "blip", "f0": 880, "f1": 1320, "dur": 0.08, "gain": 0.04, "wave": "triangle" }
+    },
+    "remove": {
+      "files": ["remove_a.ogg", "remove_b.ogg"],
+      "gain": 0.36,
+      "pitch": [0.9, 1.06],
+      "jitter": 0.12,
+      "cooldown": 60,
+      "bus": "sfx",
+      "send": 0.1,
+      "accent": { "type": "blip", "f0": 420, "f1": 240, "dur": 0.1, "gain": 0.05, "wave": "sine" }
+    },
+    "undo": {
+      "files": ["undo.ogg"],
+      "gain": 0.34,
+      "pitch": [0.94, 1.04],
+      "jitter": 0.1,
+      "cooldown": 60,
+      "bus": "sfx",
+      "send": 0.06
+    },
+    "reset": {
+      "files": ["reset.ogg"],
+      "gain": 0.38,
+      "pitch": [0.96, 1.04],
+      "jitter": 0.08,
+      "cooldown": 200,
+      "bus": "sfx",
+      "send": 0.18
+    },
+    "error": {
+      "files": ["error.ogg", "error_b.ogg"],
+      "gain": 0.3,
+      "pitch": [0.95, 1.05],
+      "jitter": 0.1,
+      "cooldown": 180,
+      "bus": "sfx",
+      "send": 0.08
+    },
+    "modal_open": {
+      "files": ["modal_open.ogg"],
+      "gain": 0.34,
+      "pitch": [0.97, 1.03],
+      "jitter": 0.06,
+      "cooldown": 120,
+      "bus": "sfx",
+      "send": 0.12
+    },
+    "modal_close": {
+      "files": ["modal_close.ogg"],
+      "gain": 0.32,
+      "pitch": [0.97, 1.03],
+      "jitter": 0.06,
+      "cooldown": 120,
+      "bus": "sfx",
+      "send": 0.1
+    },
+    "level_start": {
+      "files": ["level_start.ogg"],
+      "gain": 0.34,
+      "pitch": [0.99, 1.01],
+      "jitter": 0.05,
+      "cooldown": 300,
+      "bus": "sfx",
+      "send": 0.2
+    },
+    "beam_on": {
+      "files": ["beam_on.ogg"],
+      "gain": 0.26,
+      "pitch": [0.98, 1.03],
+      "jitter": 0.06,
+      "cooldown": 250,
+      "bus": "sfx",
+      "send": 0.24
+    },
+    "beam_off": {
+      "files": ["beam_off.ogg"],
+      "gain": 0.2,
+      "pitch": [0.96, 1.04],
+      "jitter": 0.08,
+      "cooldown": 250,
+      "bus": "sfx",
+      "send": 0.18
+    },
+    "receptor": {
+      "files": ["receptor.ogg"],
+      "gain": 0.22,
+      "pitch": [0.94, 1.06],
+      "jitter": 0.1,
+      "cooldown": 90,
+      "bus": "sfx",
+      "send": 0.2
+    },
+    "solve_swell": {
+      "files": ["solve_swell.ogg"],
+      "gain": 0.24,
+      "pitch": [0.98, 1.02],
+      "jitter": 0.04,
+      "cooldown": 1500,
+      "bus": "sfx",
+      "send": 0.35
+    },
+    "hint": {
+      "files": ["hint.ogg"],
+      "gain": 0.3,
+      "pitch": [0.97, 1.04],
+      "jitter": 0.08,
+      "cooldown": 120,
+      "bus": "sfx",
+      "send": 0.14
+    },
+    "player_join": {
+      "files": ["player_join.ogg"],
+      "gain": 0.3,
+      "pitch": [0.93, 1.07],
+      "jitter": 0.1,
+      "cooldown": 200,
+      "bus": "sfx",
+      "send": 0.18
+    },
+    "rotate_tick": { "synth": "tick", "gain": 1.0, "cooldown": 22 },
+    "receptor_chime": { "synth": "bell", "gain": 1.0, "cooldown": 60 },
+    "solve": { "synth": "solve", "gain": 1.0, "cooldown": 1400 }
+  },
+  "synth": {
+    "chord": [293.665, 440.0, 659.255],
+    "solveChord": [146.832, 293.665, 440.0, 659.255, 739.989, 880.0],
+    "solveStagger": [0.0, 0.05, 0.11, 0.17, 0.25, 0.33],
+    "sparkleScale": [587.33, 659.26, 739.99, 880.0, 1108.73, 1174.66, 1318.51, 1479.98, 1760.0, 2217.46],
+    "bell": {
+      "gain": 0.21,
+      "partials": [1.0, 2.0, 2.997, 4.235, 5.432, 6.79],
+      "levels": [1.0, 0.46, 0.3, 0.17, 0.1, 0.06],
+      "decays": [2.7, 2.0, 1.45, 0.95, 0.62, 0.45],
+      "strikeGain": 0.1,
+      "subGain": 0.16,
+      "send": 0.42
+    },
+    "tick": {
+      "gain": 0.13,
+      "baseHz": 900,
+      "octaves": 1.5,
+      "dur": 0.022,
+      "noiseGain": 0.05,
+      "send": 0.06
+    },
+    "hum": {
+      "gain": 0.038,
+      "partials": [55, 82.5, 110, 164.5],
+      "levels": [1.0, 0.5, 0.34, 0.14],
+      "waves": ["sine", "sine", "triangle", "sine"],
+      "cutoff": [190, 1350],
+      "noiseGain": 0.35,
+      "noiseBand": [300, 2400],
+      "breathHz": 0.052,
+      "breathDepth": 0.13,
+      "driftHz": 0.071,
+      "send": 0.3
+    },
+    "sparkle": {
+      "count": 14,
+      "spread": 0.95,
+      "dur": 0.055,
+      "gain": 0.075,
+      "send": 0.5
+    },
+    "reverb": {
+      "seconds": 1.7,
+      "decay": 2.9,
+      "predelay": 0.02,
+      "damp": 0.34
+    }
+  }
+}
