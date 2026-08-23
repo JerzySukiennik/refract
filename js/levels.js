@@ -7,7 +7,7 @@ export const LEVELS = [
   {
     id: 1,
     name: 'FIRST LIGHT',
-    par: 1,
+    par: 2,
     emitter: { x: 200, y: 100, dir: 90 * DEG },
     walls: [
       { x: 620, y: 80, w: 300, h: 40 },
@@ -17,13 +17,12 @@ export const LEVELS = [
       { x: 700, y: 575, color: 'green' },
       { x: 925, y: 475, color: 'orange' },
     ],
-    inventory: { mirror: 1, prism: 0 },
-    fixed: [
-      { type: 'prism', x: 350, y: 875, angle: 65 * DEG },
-    ],
-    hint: 'The glass is already set. All it needs is light.',
+    inventory: { mirror: 1, prism: 1 },
+    fixed: [],
+    hint: 'A mirror to steer the light, then glass to break it apart.',
     solution: [
       { type: 'mirror', x: 200, y: 875, angle: 45 * DEG },
+      { type: 'prism', x: 350, y: 875, angle: 65 * DEG },
     ],
   },
   {
@@ -40,20 +39,18 @@ export const LEVELS = [
       { x: 550, y: 275, color: 'green' },
       { x: 600, y: 100, color: 'orange' },
     ],
-    inventory: { mirror: 2, prism: 0 },
-    fixed: [
-      { type: 'prism', x: 200, y: 700, angle: 320 * DEG },
-    ],
+    inventory: { mirror: 2, prism: 1 },
+    fixed: [],
     hint: 'Two turns, and the beam arrives from below.',
     solution: [
-      { type: 'mirror', x: 700, y: 900, angle: 135 * DEG },
-      { type: 'mirror', x: 200, y: 900, angle: 45 * DEG },
+      { type: 'prism', x: 700, y: 600, angle: 255 * DEG },
+      { type: 'mirror', x: 600, y: 700, angle: 15 * DEG },
     ],
   },
   {
     id: 3,
     name: 'BEHIND THE PILLAR',
-    par: 2,
+    par: 3,
     emitter: { x: 100, y: 300, dir: 0 * DEG },
     walls: [
       { x: 300, y: 220, w: 220, h: 200 },
@@ -64,20 +61,19 @@ export const LEVELS = [
       { x: 750, y: 500, color: 'cyan' },
       { x: 875, y: 450, color: 'green' },
     ],
-    inventory: { mirror: 2, prism: 0 },
-    fixed: [
-      { type: 'prism', x: 400, y: 850, angle: 65 * DEG },
-    ],
+    inventory: { mirror: 2, prism: 1 },
+    fixed: [],
     hint: 'Go around, not through.',
     solution: [
       { type: 'mirror', x: 200, y: 300, angle: 45 * DEG },
       { type: 'mirror', x: 200, y: 850, angle: 45 * DEG },
+      { type: 'prism', x: 400, y: 850, angle: 65 * DEG },
     ],
   },
   {
     id: 4,
     name: 'SWITCHBACK',
-    par: 3,
+    par: 4,
     emitter: { x: 100, y: 150, dir: 0 * DEG },
     walls: [
       { x: 80, y: 280, w: 160, h: 180 },
@@ -89,15 +85,14 @@ export const LEVELS = [
       { x: 575, y: 225, color: 'cyan' },
       { x: 625, y: 100, color: 'green' },
     ],
-    inventory: { mirror: 3, prism: 0 },
-    fixed: [
-      { type: 'prism', x: 250, y: 550, angle: 320 * DEG },
-    ],
-    hint: 'Three folds around the rim before the glass sees anything.',
+    inventory: { mirror: 3, prism: 1 },
+    fixed: [],
+    hint: 'Three folds around the rim, and set the glass where the beam finally arrives.',
     solution: [
       { type: 'mirror', x: 850, y: 150, angle: 45 * DEG },
       { type: 'mirror', x: 850, y: 900, angle: 135 * DEG },
       { type: 'mirror', x: 250, y: 900, angle: 45 * DEG },
+      { type: 'prism', x: 250, y: 550, angle: 320 * DEG },
     ],
   },
   {
@@ -545,7 +540,7 @@ export const LEVELS = [
   {
     id: 24,
     name: 'TERMINUS',
-    par: 4,
+    par: 3,
     emitter: { x: 500, y: 100, dir: 90 * DEG },
     walls: [
       { x: 300, y: 80, w: 40, h: 200 },
@@ -556,16 +551,13 @@ export const LEVELS = [
       { x: 600, y: 700, color: 'cyan' },
       { x: 650, y: 825, color: 'green' },
     ],
-    inventory: { mirror: 4, prism: 0 },
-    fixed: [
-      { type: 'prism', x: 200, y: 300, angle: 155 * DEG },
-    ],
+    inventory: { mirror: 4, prism: 1 },
+    fixed: [],
     hint: 'Everything you have learned, on one board.',
     solution: [
-      { type: 'mirror', x: 500, y: 850, angle: 135 * DEG },
-      { type: 'mirror', x: 100, y: 850, angle: 45 * DEG },
-      { type: 'mirror', x: 100, y: 150, angle: 135 * DEG },
-      { type: 'mirror', x: 200, y: 150, angle: 45 * DEG },
+      { type: 'prism', x: 500, y: 200, angle: 265 * DEG },
+      { type: 'mirror', x: 200, y: 550, angle: 80 * DEG },
+      { type: 'mirror', x: 300, y: 350, angle: 90 * DEG },
     ],
   },
 ];
