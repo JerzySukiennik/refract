@@ -178,3 +178,34 @@ needs enough substrate and contrast to read as a physical object even when lit h
 
 At least one level pairs blue with cyan among its three receptors, which are hard to tell
 apart at ring size and harder once the fan is on them. Prefer maximally distinct triples.
+
+## 10. Beam, after the round-2 restoration — two faults remain
+
+The antisymmetric-fringe rewrite was the right diagnosis and the per-channel numbers now
+track REFERENCE.md 4.2 closely. Width is also fine: our FWHM measures about 57 board units
+against the reference's 54.6, so anyone reporting the beam as "too thin" or "too fat" is
+measuring in frame pixels without converting through the board scale. Do not chase width.
+
+What is still wrong is brightness distribution, in two specific ways:
+
+### 10.1 The grain is far too strong and is eating the core
+
+REFERENCE.md 4.3 specifies authoring at 4–6 % RMS. What renders reads more like 20–30 %:
+the core is visibly streaky and semi-transparent, broken by dark longitudinal gaps, so the
+beam looks like a translucent smear rather than a solid bar of light with texture in it.
+The reference core is SOLID — grain modulates it by a few percent, it does not perforate
+it. Measure the actual rendered RMS along the core centreline and bring it to 4–6 %. Keep
+the anisotropy (about 3 px correlation across, 8–18 px along); only the amplitude is wrong.
+
+### 10.2 There is almost no bloom halo
+
+In the reference a beam sits inside a broad, soft glow that reaches well beyond the beam's
+own width and lifts the black around it. Ours falls to background within a few pixels of
+the shoulders, which is what makes it read as a flat drawn shape rather than a light
+source. This is the pipeline's bloom, not the beam shader: the beam must write HDR values
+well above 1.0 in its core so the bright-pass has something to work with, and the bloom's
+radius and intensity must be large enough to produce a visible halo. Verify by measuring
+how far from the beam centreline the frame is still measurably above the empty-board black,
+and compare that distance against the same measurement on ref_001.jpg.
+
+Fixing 10.1 without 10.2 will produce a clean but lifeless beam. Both, together.

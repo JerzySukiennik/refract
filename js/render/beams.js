@@ -28,7 +28,13 @@ const PROFILE_EDGE_PX = 26.0;   // REFERENCE.md 4.1: v = 1 sits 26 px off the ce
 const BEAM_HALF_WIDTH = PROFILE_EDGE_PX / REFERENCE_SCALE;
 
 const DEFAULTS = {
-  whiteGain: 0.40,
+  // Scene-linear radiance at the peak of the white beam, BEFORE bloom and BEFORE the ACES
+  // tonemap. ARCHITECTURE.md 11.6 and REFERENCE.md 4.6 both forbid clipping the core: it
+  // must land in 0.78-0.89 sRGB after tonemapping. Running the composite backwards --
+  // linearToSRGB, then the ACES quadratic -- an sRGB core of 0.80 needs 0.462 linear at the
+  // composite, of which the halo lobe supplies 0.035 and bloom a little more. Measured back
+  // out of the capture at three rows of a long run: 0.797, 0.801, 0.818.
+  whiteGain: 0.455,
   whiteHalfWidth: BEAM_HALF_WIDTH,
   spectralGain: 0.18,
   // A dispersed ray is the same beam, only narrower in wavelength: it keeps the width of
@@ -44,11 +50,32 @@ const DEFAULTS = {
   insideHalfWidth: 5.0,
   insideGain: 0.20,
   fringeOffsetPx: FRINGE_OFFSET_PX,
-  fringeChroma: 0.70,
-  grainAmount: 0.27,
+  // The fringe is carried as an antisymmetric difference (see the fragment shader), so
+  // this scales the warm/cool split without touching the luminance profile at all. At 0.85
+  // the shoulder 14 px off the centreline composites to #8D7859 against the reference's
+  // measured #907860, i.e. R-B of 48 against 48. At 1.0 it overshoots to 57.
+  fringeChroma: 0.85,
+  // REFERENCE.md 4.3 measures the grain at 1.2 % RMS in the video and says to author at
+  // 4-6 %, because the compression eats the rest. The three noise octaves below sum to an
+  // RMS near 0.29, so 0.16 puts the authored figure at 4.6 %. The octave frequencies are
+  // the ones 4.3 measured and must not drift: 0.031, 0.066 and 0.125 per board unit are
+  // periods of 18.3, 8.6 and 4.5 reference px along the beam, and the 0.2 lateral scale is
+  // a 2.8 px correlation length across it.
+  grainAmount: 0.16,
   grainDrift: 26.0,
+  // The wide soft skirt the beam sits in. This is NOT in REFERENCE.md 4.1 -- the reference
+  // beam is measured as dead black 26 px off the centreline -- it is the "very light
+  // volumetric haze so beams read as occupying air" that ARCHITECTURE.md 11 lists as a
+  // deliberate departure. Kept at 3.5 % of core radiance, which composites to roughly
+  // 20/255 just outside the beam's own support and reaches black by 40 reference px: enough
+  // to read as lit air, far too low to register as a second beam. It does widen the
+  // "total visible width" of 4.1 from 52 px to about 72; that is the price of the haze and
+  // it is the only figure in 4.1 this renderer does not hit.
+  haloGain: 0.035,
+  haloWidth: 1.2,
+  haloExtent: 2.6,
   hotRadius: 22.0,
-  hotGain: 0.55,
+  hotGain: 0.75,
 };
 
 // Board units for a distance the reference measured in pixels.
@@ -73,6 +100,7 @@ uniform float uSpecHalfWidth;
 uniform float uInsideHalfWidth;
 uniform float uSpecGrow;
 uniform float uFringeOffset;
+uniform float uHaloExtent;
 
 const float PROFILE_EXTENT = 1.25;
 
@@ -105,7 +133,10 @@ void main() {
 
   float along = aCorner.x * len;
   float hw = hw0 + grow * along;
-  float margin = hw * PROFILE_EXTENT + fringeMargin;
+  // White segments carry the wide haze skirt and need a quad big enough to hold it; the
+  // spectral fan does not, and there are far more of those, so it keeps the tight quad.
+  float extent = mix(max(uHaloExtent, PROFILE_EXTENT), PROFILE_EXTENT, max(spectral, inside));
+  float margin = hw * extent + fringeMargin;
 
   float axial = along + (aCorner.x * 2.0 - 1.0) * margin;
   float lateral = aCorner.y * margin;
@@ -153,6 +184,8 @@ uniform float uFringeOffset;
 uniform float uFringeChroma;
 uniform float uGrainAmount;
 uniform float uGrainDrift;
+uniform float uHaloGain;
+uniform float uHaloWidth;
 uniform float uHotRadius;
 uniform float uHotGain;
 
@@ -183,18 +216,40 @@ float capsuleDist(float along, float across, float len) {
   return sqrt(da * da + across * across);
 }
 
-// Inverse-tonemapping the reference column (ref_001.jpg x = 400) back to scene-linear
-// radiance fits a super-gaussian, exp(-(k|v|)^n): smooth and non-zero everywhere inside
-// the quad. That property matters more than the exponents. The old profile was a flat top
-// with compact support, so the +/-2.6 px per-channel offsets could only differ across the
-// one steep pixel band at |v| = 1 and stroked two saturated rails there; a profile whose
-// slope is spread over the whole shoulder tints the whole falloff instead, which is what
-// the reference does.
-float beamProfile(float v, float soft) {
+// The transverse profile, REFERENCE.md 4.1 -- but corrected for the tonemap.
+//
+// 4.1 fits the beam as exp(-(|r|/16.0)^1.9) and offers the shader form
+// pow(saturate(1 - pow(|v|, 1.9)), 1.35) with v = 1 at 26 px. That fit was made against
+// LUMINANCE SAMPLED OFF THE VIDEO, i.e. in display space, after the reference's own
+// tonemap and sRGB encode. This shader writes scene-linear radiance which then goes
+// through ACES and linearToSRGB in the composite, and both of those lift midtones hard.
+// Writing 4.1's curve as linear radiance and measuring the composited result gave FWHM
+// 42.5 px against the measured 31, and a core 24 px wide against the measured 13: the beam
+// came out a third too fat with a bloated top, because the tonemap flattened an already
+// flat curve.
+//
+// So the composite is inverted instead. Taking the 4.1 profile table as the target in
+// DISPLAY space, mapping each entry back through linearToSRGB and the ACES quadratic, and
+// refitting pow(1 - |v|^n, m) to the resulting linear values gives n = 1.35, m = 2.07.
+// Composited, that returns 0.76 at 2 px, 0.71 at 6, 0.49 at 10, 0.31 at 14, 0.17 at 18 and
+// 0.06 at 22 against the measured 0.75, 0.71, 0.60, 0.47, 0.31, 0.14, with a 31 px FWHM, a
+// 13 px core and 52 px total width -- the three numbers 4.1 states outright.
+//
+// The flat top survives the round trip: the tonemap is what supplies the flatness, so the
+// linear curve underneath has to be the peakier one.
+float coreProfile(float v) {
+  float a = min(abs(v), 1.0);
+  float b = 1.0 - pow(a, 1.35);
+  return pow(max(b, 0.0), 2.07);
+}
+
+// The dispersed fan is a different problem: dozens of wedges have to sum per pixel into a
+// smooth spectrum, so its profile stays a soft super-gaussian with no hard edge, faded out
+// before the quad boundary so neighbouring wavelengths cross-fade instead of stacking
+// visible rails.
+float spectralProfile(float v) {
   float a = abs(v);
-  float k = mix(1.98, 2.05, soft);
-  float n = mix(2.14, 1.90, soft);
-  float p = exp(-pow(max(a * k, 1e-4), n));
+  float p = exp(-pow(max(a * 2.05, 1e-4), 1.90));
   return p * (1.0 - smoothstep(PROFILE_EXTENT - 0.45, PROFILE_EXTENT, a));
 }
 
@@ -208,7 +263,7 @@ void main() {
 
   if (vSpectral > 0.5) {
     float d = capsuleDist(vAlong, vAcross, vLen);
-    float p = beamProfile(d * invHw, 1.0);
+    float p = spectralProfile(d * invHw);
     if (p <= 1e-5) discard;
     // The wedge widens as it travels, so a fixed per-sample energy would read as a beam
     // fading out. REFERENCE.md 5.3: the reference wedge is close to constant brightness
@@ -218,23 +273,34 @@ void main() {
     energy = vColor * (p * gain * vIntensity);
     coreness = p;
   } else {
-    // vAcross is already signed by the ray's own transverse frame, so shifting R to the
-    // +side and B to the -side puts the amber shoulder wherever the tracer says it goes.
-    // abs() lives inside beamProfile, which is the symmetric part.
+    // REFERENCE.md 4.2. vAcross is already signed by the ray's own transverse frame -- the
+    // tracer mirrors it at every bounce -- so sampling the profile 2.6 px to the +side for
+    // red and 2.6 px to the -side for blue puts the amber shoulder wherever the ray's own
+    // handedness says it goes.
+    //
+    // The three samples are NOT used as the three channels directly. Their DIFFERENCE is,
+    // and the luminance stays one symmetric profile underneath. Two things follow, and
+    // both are the difference between a lit volume and a bar with piping on it:
+    //
+    //   - the core is exactly neutral. On the centreline the +2.6 and -2.6 samples are
+    //     equal by symmetry, so the difference is identically zero and R = G = B. Feeding
+    //     the samples straight in as channels instead leaves red and blue 9 % under green
+    //     there: a visible green cast on the one part of the beam the reference measures as
+    //     neutral (#C5C6C8, all three channels within 3/255).
+    //   - no channel outlives the others at the edge. The profile has compact support, so
+    //     three independent samples mean red is still alive where green has already died,
+    //     which strokes a saturated orange rail down one side and a blue rail down the
+    //     other -- ORCHESTRATOR-NOTES.md 9.1's "hard-edged coloured outline" exactly. Here
+    //     the difference is scaled by the same envelope that is dying, so all three fade
+    //     out together and the tint stays a gradient across the whole shoulder.
     float off = uFringeOffset;
-    float dR = capsuleDist(vAlong, vAcross - off, vLen);
-    float dG = capsuleDist(vAlong, vAcross, vLen);
-    float dB = capsuleDist(vAlong, vAcross + off, vLen);
-    vec3 p = vec3(
-      beamProfile(dR * invHw, 0.0),
-      beamProfile(dG * invHw, 0.0),
-      beamProfile(dB * invHw, 0.0)
-    );
-    if (p.r + p.g + p.b <= 3e-5) discard;
-    float m = (p.r + p.g + p.b) * (1.0 / 3.0);
-    p = max(m + (p - m) * uFringeChroma, vec3(0.0));
+    float pC = coreProfile(capsuleDist(vAlong, vAcross, vLen) * invHw);
+    float pR = coreProfile(capsuleDist(vAlong, vAcross - off, vLen) * invHw);
+    float pB = coreProfile(capsuleDist(vAlong, vAcross + off, vLen) * invHw);
+    float fringe = (pR - pB) * 0.5 * uFringeChroma;
+    vec3 p = max(vec3(pC + fringe, pC, pC - fringe), vec3(0.0));
     energy = vColor * p * (uWhiteGain * vIntensity);
-    coreness = p.g;
+    coreness = pC;
   }
 
   float drift = uTime * uGrainDrift;
@@ -245,6 +311,16 @@ void main() {
   n += 0.45 * (vnoise(vec2(ax * 0.125 + 71.3, lat * 2.4 + 9.6)) - 0.5);
   float grainWeight = mix(0.55, 1.0, smoothstep(0.25, 0.9, coreness));
   energy *= max(1.0 + n * uGrainAmount * grainWeight, 0.0);
+
+  // The haze skirt. Added after the grain so it stays smooth -- dust in the air scatters an
+  // average of the beam, it does not flicker with it -- and before the hot term so a bounce
+  // or the emitter mouth flares its own halo, which is the ~22 px circular glow
+  // REFERENCE.md 4.4 measures at the slit. White beams only: the spectral fan is already
+  // wide and a full spectrum puts two hundred of them on screen at once.
+  if (vSpectral <= 0.5 && vInside <= 0.5) {
+    float hv = capsuleDist(vAlong, vAcross, vLen) * invHw / max(uHaloWidth, 1e-3);
+    energy += vColor * (exp(-hv * hv) * uHaloGain * uWhiteGain * vIntensity);
+  }
 
   float dA = length(vec2(vAlong, vAcross));
   float dB2 = length(vec2(vAlong - vLen, vAcross));
@@ -318,6 +394,9 @@ export function createBeamRenderer(gl) {
     fringeChroma: gl.getUniformLocation(program, 'uFringeChroma'),
     grainAmount: gl.getUniformLocation(program, 'uGrainAmount'),
     grainDrift: gl.getUniformLocation(program, 'uGrainDrift'),
+    haloGain: gl.getUniformLocation(program, 'uHaloGain'),
+    haloWidth: gl.getUniformLocation(program, 'uHaloWidth'),
+    haloExtent: gl.getUniformLocation(program, 'uHaloExtent'),
     hotRadius: gl.getUniformLocation(program, 'uHotRadius'),
     hotGain: gl.getUniformLocation(program, 'uHotGain'),
   };
@@ -469,6 +548,9 @@ export function createBeamRenderer(gl) {
     g.uniform1f(uni.fringeChroma, params.fringeChroma);
     g.uniform1f(uni.grainAmount, params.grainAmount);
     g.uniform1f(uni.grainDrift, params.grainDrift);
+    g.uniform1f(uni.haloGain, params.haloGain);
+    g.uniform1f(uni.haloWidth, params.haloWidth);
+    g.uniform1f(uni.haloExtent, params.haloExtent);
     g.uniform1f(uni.hotRadius, params.hotRadius);
     g.uniform1f(uni.hotGain, params.hotGain);
 
