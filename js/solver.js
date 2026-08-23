@@ -400,14 +400,96 @@ function searchFrom(level, prefix, options) {
   return { solved: false, optics: [], nodesExplored: nodes, timedOut };
 }
 
-// A level carries its author's own solution (ARCHITECTURE.md section 12), and that is a
-// better answer than anything the search can find: it is exact, instant and known good.
-// The search only has to run when the caller asks for something the level does not already
-// carry - which is precisely the validator's hunt for a solution SHORTER than par.
-function embeddedSolution(level, cap, traceOpts) {
+// ---------------------------------------------------------------------------
+// The lookup path. This is what the capture harness and the game use, and it must be
+// exact, instant and deterministic: every level carries its author's own verified
+// solution (ARCHITECTURE.md section 12), so nothing here is allowed to run a search.
+//
+// It used to. `solve()` reads the embedded solution first, but when that read was
+// rejected for ANY reason it fell through to the heuristic search, and the search fails
+// on most boards inside its wall-clock budget: measured on these 24 levels, running
+// `solve(level, { useEmbedded: false })` returns an EMPTY placement on 18 of the 24
+// boards, 17 of them by exhausting the 12 s budget. That is exactly the "solve returned
+// nothing, so the capture got an empty board" fault, and because the budget is
+// wall-clock it appeared and disappeared with machine load. The capture path now never
+// reaches the search at all.
+// ---------------------------------------------------------------------------
+
+const warned = new Set();
+
+function warnOnce(key, message) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  if (typeof console !== 'undefined' && console.warn) console.warn(`[solver] ${message}`);
+}
+
+function normaliseOptic(o) {
+  if (!o || (o.type !== 'mirror' && o.type !== 'prism')) return null;
+  const x = Number(o.x);
+  const y = Number(o.y);
+  const angle = Number(o.angle || 0);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(angle)) return null;
+  return { type: o.type, x, y, angle: norm(angle) };
+}
+
+/**
+ * The level's own solution as a fresh, placeable array of optics. Pure data: no search,
+ * no time budget, no shared state, identical on every call. Returns [] only when the
+ * level genuinely carries no usable `solution` array.
+ */
+export function solutionFor(level) {
   const sol = level && level.solution;
-  if (!Array.isArray(sol) || !sol.length || sol.length > cap) return null;
-  const optics = sol.map((o) => ({ type: o.type, x: o.x, y: o.y, angle: o.angle }));
+  if (!Array.isArray(sol) || sol.length === 0) {
+    warnOnce(`missing:${level && level.id}`, `level ${level && level.id} carries no solution array`);
+    return [];
+  }
+  const out = [];
+  for (let i = 0; i < sol.length; i++) {
+    const o = normaliseOptic(sol[i]);
+    if (o) out.push(o);
+    else warnOnce(`malformed:${level.id}:${i}`, `level ${level.id} solution entry ${i} is malformed and was skipped`);
+  }
+  return out;
+}
+
+/**
+ * Does the level's own solution actually solve it, traced at the caller's floor?
+ * Verification is a diagnostic here, never a gate: a board built from the author's
+ * placement is always better evidence than an empty board.
+ */
+export function solutionSolves(level, traceOpts) {
+  const optics = solutionFor(level);
+  if (!optics.length) return false;
+  return traceScene(level, optics, traceOpts || {}).solved;
+}
+
+/**
+ * The entry point `main.js` resolves for its capture scripts — `pick(solver,
+ * 'solveLevel', 'solve', ...)` finds this name first, so scripted captures get the
+ * deterministic lookup and can never fall into the search. Returns a plain array,
+ * which is one of the shapes `solutionFor()` in main.js accepts.
+ *
+ * A level with no embedded solution is a level authoring bug, and it is reported as one
+ * rather than silently searching: a search here would reintroduce the exact
+ * intermittency this function exists to remove.
+ */
+export function solveLevel(level, options) {
+  const optics = solutionFor(level);
+  if (!optics.length) return [];
+  const opts = options || {};
+  if (opts.verify !== false && !traceScene(level, optics, opts.traceOpts || {}).solved) {
+    // Still return it. An authored board that no longer solves is a levels.js defect for
+    // `tools/validate-levels.mjs` to fail on, not a reason to hand the renderer nothing.
+    warnOnce(`stale:${level.id}`, `level ${level.id} solution no longer solves the board; run tools/validate-levels.mjs`);
+  }
+  return optics;
+}
+
+// The search is only ever needed for something the level does NOT already carry, which is
+// precisely the validator's hunt for a solution SHORTER than par.
+function embeddedSolution(level, cap, traceOpts) {
+  const optics = solutionFor(level);
+  if (!optics.length || optics.length > cap) return null;
   return traceScene(level, optics, traceOpts || {}).solved ? optics : null;
 }
 
@@ -419,7 +501,13 @@ export function solve(level, options) {
     (inv.mirror || 0) + (inv.prism || 0),
   );
   if (opts.useEmbedded !== false) {
-    const known = embeddedSolution(level, cap, opts.traceOpts);
+    // The embedded solution is capped ONLY by an explicit `maxOptics` — that is the
+    // validator asking for something shorter than par, and the one case where the level's
+    // own answer is not the answer wanted. The inventory clamp must not gate it: clamping
+    // an authored 5-optic solution against a mis-typed inventory used to drop it into the
+    // search, which is where the empty results came from.
+    const embedCap = opts.maxOptics === undefined ? Infinity : opts.maxOptics;
+    const known = embeddedSolution(level, embedCap, opts.traceOpts);
     if (known) return { solved: true, optics: known, nodesExplored: 1, timedOut: false };
   }
   const total = opts.timeBudgetMs === undefined ? 12000 : opts.timeBudgetMs;
@@ -429,6 +517,7 @@ export function solve(level, options) {
     const r = searchFrom(level, [], {
       ...opts,
       weights: PROFILES[p],
+      maxOptics: cap,
       timeBudgetMs: total / PROFILES.length,
     });
     nodes += r.nodesExplored;
@@ -464,37 +553,43 @@ export function hint(level, placedOptics) {
     return { text: 'Every receptor is lit. This board is done.', ghost: null };
   }
 
-  let found = { solved: false, optics: [] };
-  for (let p = 0; p < PROFILES.length && !found.solved; p++) {
-    found = searchFrom(level, placed, { timeBudgetMs: 1200, weights: PROFILES[p] });
+  // The author's own line comes FIRST, for the same reason the capture path never searches:
+  // it is exact and instant, so a hint on a board the player is still solving the intended
+  // way costs one trace instead of up to 3.6 s of budgeted search whose answer varies with
+  // machine load. It only applies while the player is still on that line — if they have
+  // placed something that is not part of it, telling them to add the next piece of a
+  // different plan would be worse than telling them to take a piece back.
+  const sol = solutionFor(level);
+  const used = new Array(sol.length).fill(false);
+  let onLine = sol.length > 0;
+  for (let i = 0; i < placed.length && onLine; i++) {
+    let hit = -1;
+    for (let j = 0; j < sol.length; j++) {
+      if (used[j] || sol[j].type !== placed[i].type) continue;
+      if (Math.hypot(sol[j].x - placed[i].x, sol[j].y - placed[i].y) > 30) continue;
+      if (Math.abs(norm(sol[j].angle - placed[i].angle + Math.PI) - Math.PI) > 6 * DEG) continue;
+      hit = j;
+      break;
+    }
+    if (hit < 0) onLine = false;
+    else used[hit] = true;
   }
 
-  // The short search is allowed to fail on a board it cannot discretise well. When it does,
-  // fall back on the author's own solution, but only while the player is still on that line —
-  // if they have placed something that is not part of it, telling them to add the next piece
-  // of a different plan would be worse than telling them to take a piece back.
-  let next = found.solved ? found.optics[placed.length] : null;
+  let next = null;
+  if (onLine) {
+    for (let j = 0; j < sol.length; j++) {
+      if (!used[j]) { next = sol[j]; break; }
+    }
+  }
+
+  // Off the author's line: the player is exploring their own arrangement, so the search is
+  // the only thing that can speak to the board in front of them. It is allowed to fail.
   if (!next) {
-    const sol = Array.isArray(level.solution) ? level.solution : [];
-    const used = new Array(sol.length).fill(false);
-    let onLine = true;
-    for (let i = 0; i < placed.length; i++) {
-      let hit = -1;
-      for (let j = 0; j < sol.length; j++) {
-        if (used[j] || sol[j].type !== placed[i].type) continue;
-        if (Math.hypot(sol[j].x - placed[i].x, sol[j].y - placed[i].y) > 30) continue;
-        if (Math.abs(norm(sol[j].angle - placed[i].angle + Math.PI) - Math.PI) > 6 * DEG) continue;
-        hit = j;
-        break;
-      }
-      if (hit < 0) { onLine = false; break; }
-      used[hit] = true;
+    let found = { solved: false, optics: [] };
+    for (let p = 0; p < PROFILES.length && !found.solved; p++) {
+      found = searchFrom(level, placed, { timeBudgetMs: 1200, weights: PROFILES[p] });
     }
-    if (onLine) {
-      for (let j = 0; j < sol.length; j++) {
-        if (!used[j]) { next = sol[j]; break; }
-      }
-    }
+    if (found.solved) next = found.optics[placed.length] || null;
   }
 
   if (!next) {

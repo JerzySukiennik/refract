@@ -272,3 +272,29 @@ rather than trusting the report.
 - `solver.solve` intermittently returns nothing, which makes `script('folding')` and
   `script('solved')` occasionally capture an empty board. Two separate agents hit this and
   lost measurements to it. It needs a real fix, not a retry.
+
+## 12. Ownership gap: mobile/touch has no owner
+
+The round-3 `feel` critic reported: *"THE TOUCH LAYER IS STILL BUILT AT MOUSE SCALE — round 2
+flagged it and round 3 did not move it."* That is not a builder being lazy. It is my
+decomposition failing.
+
+Mobile correctness spans three different builders' file sets:
+- tap target sizes for the rotate handle live in `js/input.js` (the `feel` builder)
+- HUD chip sizes and the tap-to-place ghost live in `js/ui/hud.js` and `css/ui.css` (the
+  `hud` builder)
+- how much of the phone screen the board occupies lives in `js/render/gl.js` (nobody's)
+
+Each round every builder correctly reported "not my files" and moved on, so the item has
+survived two full rounds untouched. Whenever a defect keeps reappearing with "not mine"
+attached, the fix is a builder whose file set matches the defect's real shape — not another
+round of the same split.
+
+**Round 4 must run a single MOBILE builder owning `js/input.js`, `js/ui/hud.js`,
+`css/ui.css` and `js/render/gl.js` together**, briefed on: 44 px minimum touch targets, a
+ghost preview for the tap-to-place path so the player is not tapping blind, and a board that
+uses the phone screen properly (it currently renders 296 px inside an 812 px viewport,
+leaving about 64 % of the screen empty). Primary target is Safari on an iPhone XR.
+
+The same lesson applies generally: piece boundaries are drawn for the RENDERER's benefit,
+and a defect that lives across them needs a differently-shaped owner for one round.

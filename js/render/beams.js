@@ -73,10 +73,18 @@ const DEFAULTS = {
   insideGain: 0.20,
   fringeOffsetPx: FRINGE_OFFSET_PX,
   // The fringe is carried as an antisymmetric difference (see the fragment shader), so
-  // this scales the warm/cool split without touching the luminance profile at all. At 0.85
-  // the shoulder 14 px off the centreline composites to #8D7859 against the reference's
-  // measured #907860, i.e. R-B of 48 against 48. At 1.0 it overshoots to 57.
-  fringeChroma: 0.85,
+  // this scales the warm/cool split without touching the luminance profile at all.
+  //
+  // Two things were wrong at 0.85 and only one of them was this number. Measured on
+  // r3-fresh against ref_001, our |R-B| peaked at 55 where the reference peaks at 50, and
+  // it peaked at r = 18-20 px where the reference peaks at 14-16 -- the band sat two px too
+  // far out, which is most of why the two shoulders read as painted stripes rather than as
+  // dispersion. The POSITION belongs to coreProfile: the fringe is a difference of two
+  // profile samples, so it peaks where the profile's gradient does, and the old profile's
+  // gradient peaked too far out. Rebuilding the profile moved the band to r = 15 on its own,
+  // which left only the amplitude here. Simulating the composite over the new profile,
+  // 0.75 gives 49 / 50 / 45 at r = 14 / 16 / 18 against the reference's 47 / 50 / 45.
+  fringeChroma: 0.75,
   // GRAIN IS CALIBRATED ON THE COMPOSITED PNG, NOT AT AUTHORING TIME. REFERENCE.md 4.3
   // measures 1.0-1.4 % residual sigma over the local mean in the core, and tells you to
   // author at 4-6 % because video compression eats the rest. Authoring 4.6 % here and
@@ -104,6 +112,14 @@ const DEFAULTS = {
   // read 0.4 % / 0.2 % / 0.15 %. The lobe is now less than half as wide and slightly
   // stronger at its centre, which puts it back under the measured skirt and lets it die by
   // 40 px, where sRGB's steep toe otherwise magnifies a thousandth of a nit into 4/255.
+  //
+  // Re-measured on the composited PNG rather than argued about, sampling a clean 400 px
+  // stretch of the fresh board's emitter run and the same three offsets on ref_001:
+  // ours 1.5 % / 0.57 % / 0.18 % against the reference's 3.2 % / 0.50 % / 0.21 % at
+  // 26 / 30 / 40 reference px. 30 and 40 px sit on the reference, the beam reaches black,
+  // and the V at a mirror has its apex back. The only remaining gap is AT 26 px, which is
+  // exactly where coreProfile's support ends, so that one is the profile's edge and not the
+  // haze -- and ORCHESTRATOR-NOTES 10.3 forbids chasing width to close it. Leave this alone.
   haloGain: 0.055,
   haloWidth: 0.65,
   haloExtent: 1.9,
@@ -133,7 +149,14 @@ const DEFAULTS = {
   // later bounce until the drop on screen matches 4.5. Spectral and in-glass segments are
   // excluded, because their intensities are wavelength weights whose sum has to stay
   // neutral (see the header) and a power would tilt the spectrum.
-  intensityShape: 4.0,
+  //
+  // The exponent is CALIBRATED, not guessed, and 4.0 went past the mark. Measuring the
+  // 7 px core mean of each leg of the folding capture, 4.0 gave 0.851 / 0.694 / 0.578, a
+  // 18.4 % first step against 4.5's measured 14.7 %. Over the small range that matters the
+  // composited step is very nearly a power of the linear one -- 0.9^4 = 0.656 linear
+  // produced 0.816 on screen, i.e. an effective exponent of 0.48 -- so the linear ratio
+  // wanted is 0.853^(1/0.48) = 0.72, which is 0.9^3.2.
+  intensityShape: 3.2,
 };
 
 // Board units for a distance the reference measured in pixels.

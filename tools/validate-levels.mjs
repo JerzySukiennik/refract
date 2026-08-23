@@ -6,10 +6,12 @@
 //   c  a search for anything SHORTER than par; finding one is a design defect
 //   d  a search that runs out of budget is NOT a failure, only "par unconfirmed"
 //   e  geometry sanity
-// The exit code is non-zero for a, b, c and e only.
+//   f  the capture path: the lookup `main.js` uses to build a scripted board returns the
+//      same non-empty, actually-solving placement on every one of 100 consecutive calls
+// The exit code is non-zero for a, b, c, e and f only.
 
 import { LEVELS } from '../js/levels.js';
-import { solve } from '../js/solver.js';
+import { solve, solveLevel, solutionFor } from '../js/solver.js';
 import { traceScene } from '../js/optics/trace.js';
 
 // Kept local on purpose: the tracer owns these numbers, the validator only needs a
@@ -46,6 +48,12 @@ const flag = (name, fallback) => {
 const budget = Number(flag('budget', 45000));
 const only = flag('level', null);
 const quiet = args.includes('--quiet');
+// (f) How many times each level's capture-path lookup is repeated. `solver.solve` used to
+// fall through to a wall-clock-budgeted heuristic search whenever its read of the embedded
+// solution was rejected, and that search returns an empty placement on 18 of the 24 boards
+// — which is how `script('folding')` and `script('solved')` intermittently captured empty
+// boards. This check exists so that regression cannot come back unnoticed.
+const reps = Number(flag('reps', 100));
 
 function ringWalls(level) {
   const size = level.boardSize || BOARD;
@@ -214,6 +222,46 @@ function inventoryProblems(level, optics) {
   return bad;
 }
 
+function placementSignature(optics) {
+  return optics
+    .map((o) => `${o.type}@${o.x},${o.y}/${(o.angle * 180 / Math.PI).toFixed(3)}`)
+    .join(' + ');
+}
+
+// (f) The capture path, exercised exactly as the game exercises it.
+//
+// `main.js` resolves its scripted-scene lookup with `pick(solver, 'solveLevel', 'solve',
+// 'findSolution')` and treats an empty return as "place nothing", which is what an empty
+// screenshot is. So this asserts on `solveLevel` itself, `reps` times in a row, and
+// interleaves a trace of a DIFFERENT level between calls: the tracer keeps its scene in
+// module-level typed arrays, so a lookup that depended on leftover state would show up
+// here as a placement that changes between identical calls.
+function lookupProblems(level, otherLevel) {
+  const bad = [];
+  let signature = null;
+  for (let i = 0; i < reps; i++) {
+    if (otherLevel) traceScene(otherLevel, solutionFor(otherLevel), {});
+    const optics = solveLevel(level);
+    if (!Array.isArray(optics) || optics.length === 0) {
+      bad.push(`capture lookup returned an empty placement on call ${i + 1} of ${reps}`);
+      break;
+    }
+    const sig = placementSignature(optics);
+    if (signature === null) signature = sig;
+    else if (sig !== signature) {
+      bad.push(`capture lookup is not deterministic: call ${i + 1} returned ${sig}, call 1 returned ${signature}`);
+      break;
+    }
+    const res = traceScene(level, optics, {});
+    if (!res.solved) {
+      const missed = res.receptors.filter((r) => !r.satisfied).map((r) => r.color).join(', ');
+      bad.push(`capture lookup returned a placement that does not solve the board on call ${i + 1} (unsatisfied: ${missed})`);
+      break;
+    }
+  }
+  return bad;
+}
+
 // Informational: how far each receptor sits from the nearest prism in the solution.
 function prismRunNotes(level) {
   const prisms = (level.fixed || []).concat(level.solution || []).filter((o) => o.type === 'prism');
@@ -264,6 +312,11 @@ for (const level of LEVELS) {
     }
   }
 
+  // (f) the capture path.
+  const other = LEVELS[(LEVELS.indexOf(level) + 7) % LEVELS.length];
+  const lookupBad = lookupProblems(level, other === level ? null : other);
+  problems.push(...lookupBad);
+
   notes.push(...prismRunNotes(level));
 
   // (c) + (d) hunt for something shorter than par.
@@ -301,6 +354,7 @@ for (const level of LEVELS) {
     par: level.par,
     sol: solution ? solution.length : '-',
     ok: solutionOk,
+    lookupOk: lookupBad.length === 0,
     searchState,
     nodes,
     ms,
@@ -314,17 +368,19 @@ const padL = (v, n) => String(v).padStart(n);
 const STATE_LABEL = { confirmed: 'par confirmed', unconfirmed: 'par unconfirmed', shortcut: 'SHORTCUT' };
 
 console.log('');
-console.log(`${pad('ID', 4)}${pad('LEVEL', 22)}${padL('PAR', 4)}${padL('SOL', 5)}${padL('SOLVES', 8)}${padL('NODES', 9)}${padL('TIME', 8)}  PAR CHECK`);
-console.log('-'.repeat(84));
+console.log(`${pad('ID', 4)}${pad('LEVEL', 22)}${padL('PAR', 4)}${padL('SOL', 5)}${padL('SOLVES', 8)}${padL('LOOKUP', 9)}${padL('NODES', 9)}${padL('TIME', 8)}  PAR CHECK`);
+console.log('-'.repeat(93));
 for (const r of rows) {
   console.log(
     `${pad(r.id, 4)}${pad(r.name, 22)}${padL(r.par, 4)}${padL(r.sol, 5)}${padL(r.ok ? 'yes' : 'NO', 8)}`
-    + `${padL(r.nodes, 9)}${padL(r.ms + 'ms', 8)}  ${STATE_LABEL[r.searchState]}`,
+    + `${padL(r.lookupOk ? `${reps}/${reps}` : 'FAILED', 9)}${padL(r.nodes, 9)}${padL(r.ms + 'ms', 8)}  ${STATE_LABEL[r.searchState]}`,
   );
   if (!quiet) for (const n of r.notes) console.log(`${' '.repeat(10)}note - ${n}`);
   for (const p of r.problems) console.log(`${' '.repeat(10)}FAIL - ${p}`);
 }
-console.log('-'.repeat(84));
+console.log('-'.repeat(93));
+const lookupClean = rows.filter((r) => r.lookupOk).length;
+console.log(`capture-path lookup: ${lookupClean}/${rows.length} levels returned the same solving placement on all ${reps} calls`);
 const unconfirmed = rows.filter((r) => r.searchState === 'unconfirmed').length;
 console.log(`${rows.length - failures}/${rows.length} levels clean` + (unconfirmed ? `, ${unconfirmed} with par unconfirmed` : ''));
 console.log('');

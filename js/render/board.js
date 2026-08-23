@@ -27,8 +27,12 @@ const READOUT_GAP = 8.0;
 
 const RECEPTOR_R = 29;
 const RECEPTOR_STROKE = 7.9;
-// The pool has to reach far enough to BE the floor light — nothing else shades the floor.
-const RECEPTOR_HALO = RECEPTOR_R + 132;
+// The pool lights the floor immediately around the ring and then stops. Measured on
+// ref_001.jpg (blue receptor, left sector, median of five rays) the reference's halo is
+// already under 5 % of the ring-stroke peak 58 u outside the stroke — one ring diameter —
+// and under 1 % by 80 u. A 132 u skirt painted light a full 30 u past the point where the
+// reference has none left, which is how three receptors merged into one wash.
+const RECEPTOR_HALO = RECEPTOR_R + 100;
 const POLE_H = 77.5;
 const POLE_W = 5.3;
 // Measured off ref_001.jpg by thresholding the blue pennant (rows 534-549, x 458-490): the
@@ -431,15 +435,30 @@ void main() {
   float discCut = 1.0 - smoothstep(uRadius - uStroke * 0.30, uRadius + uStroke * 0.70, d);
   float disc = mix(0.32, 0.52, pow(ri, 1.4)) * discCut * mix(1.0, 1.30, uLit);
 
-  // Outer pool. Fitted to the reference's radial profile out of the stroke (75 % at 3 px,
-  // 55 % at 6 px, 45 % at 9 px, still readable 20 px out) as a near and a far lobe. This
-  // pool IS the floor light: nothing else shades the floor.
+  // Outer pool. Refitted against the reference's own radial profile, measured on ref_001.jpg
+  // and ref_030.jpg as the median of five rays leaving the blue receptor into open floor
+  // (the only sector free of its pole and its neighbours), expressed as a fraction of the
+  // ring stroke's peak:
+  //     d out of stroke   4 u    8 u   16 u   24 u   40 u   58 u   70 u   80 u
+  //     ref_001 (unlit)   65 %   41 %   25 %   19 %   10 %  5.0 %  2.3 %  0.6 %
+  //     ref_030 (lit)     70 %   47 %   43 %   32 %   19 %  9.2 %  4.7 %  3.8 %
+  // The previous fit quoted three near-field numbers only and let a 0.46-weight lobe with a
+  // 37-48 u length constant carry the rest, so it was still at 15 % one ring diameter out
+  // and did not reach 5 % until 90 u. The far lobe is now a third of its weight and about
+  // 0.8x its length, which puts the crossing back where the reference has it. This pool is
+  // still the floor light: nothing else shades the floor, and the near lobe is barely
+  // touched so the ring keeps tinting the board it stands on.
   float x = max(d - uRadius, 0.0);
-  float near = exp(-x / mix(9.5, 12.5, uLit));
-  float far = exp(-x / mix(37.0, 48.0, uLit));
-  float pool = (0.82 * near + 0.46 * far) * mix(1.0, 1.22, uLit);
+  // The lit branch barely widens the pool. It used to add 1.45x amplitude on top of a 27 %
+  // longer far lobe, which on the SWITCHBACK dispersion capture put the lit blue ring at
+  // 20 % of its own peak a ring diameter out against the reference's 9.2 %. Satisfaction is
+  // already carried by the ring colour (roughly 2x), the interior disc, amp, the flag and
+  // the pole; the pool only has to follow, not lead.
+  float near = exp(-x / mix(7.5, 8.0, uLit));
+  float far = exp(-x / mix(30.0, 28.0, uLit));
+  float pool = (0.50 * near + 0.20 * far) * mix(1.0, 1.05, uLit);
   pool *= smoothstep(uRadius - uStroke * 0.6, uRadius + uStroke * 0.9, d);
-  pool *= smoothstep(1.0, 0.70, d / max(uHalf.x, 1e-3));
+  pool *= smoothstep(1.0, 0.80, d / max(uHalf.x, 1e-3));
   // A lamp inside the room cannot light the far side of the wall it stands against: the
   // pool washes the brick and dies at the board's outer boundary.
   vec2 ob = min(vBoard, vec2(${BOARD.toFixed(1)}) - vBoard);
@@ -1043,7 +1062,12 @@ export function createBoardRenderer(gl) {
         const lit = litFactors.get(receptorKey(r, i)) || 0;
         const c = pal.ring[1];
         const peak = Math.max(c[0], c[1], c[2]) || 1;
-        addLight(r.x, r.y, r.x, r.y, c[0] / peak, c[1] / peak, c[2] / peak, 0.62 + 0.85 * lit);
+        // REFERENCE.md 5.4: the only place receptor light is measurable on the brick is the
+        // wall directly under a lit ring, at +21 %. gatherLight's inverse-square tail is
+        // shared with the beam lights and must not be retuned here, so the receptor's own
+        // intensity carries the limit instead: at 0.62 a ring still put 7 % of its emission
+        // onto brick 150 u away, which is what washed the top wall behind the green ring.
+        addLight(r.x, r.y, r.x, r.y, c[0] / peak, c[1] / peak, c[2] / peak, 0.40 + 0.55 * lit);
       }
     }
   }
@@ -1338,8 +1362,8 @@ export function createBoardRenderer(gl) {
       gl.uniform1f(ur.uRadius, RECEPTOR_R);
       gl.uniform1f(ur.uStroke, RECEPTOR_STROKE);
       gl.uniform1f(ur.uTime, t || 0);
-      // The pool has to be wide enough to BE the floor light: nothing else shades the floor,
-      // and the reference's receptors tint 40+ css px of floor and wash the wall behind them.
+      // Wide enough for the pool to fade to nothing inside its own quad and no wider: the
+      // sprite is 258 u across, against 322 u before, and the fan has to survive it.
       place(ur, r.x, r.y, RECEPTOR_HALO, RECEPTOR_HALO, 0);
       drawQuad();
     }
