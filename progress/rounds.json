@@ -1,7 +1,7 @@
 {
   "project": "REFRACT",
   "tagline": "Steering and dispersing light. Built against a reference, round by round.",
-  "updated": "2026-08-23T03:58:39.878411Z",
+  "updated": "2026-08-23T06:24:12.077831Z",
   "verdictLegend": {
     "reference": "The blind critic picked the reference as the polished commercial game. We lost the round.",
     "ours": "The blind critic picked ours as the polished commercial game. We won the round.",
@@ -100,6 +100,32 @@
         {
           "src": "web/r2-fresh.jpg",
           "caption": "Beam core restored: neutral, grained, chiral fringe"
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "title": "Round 3 \u2014 the overshooting stops",
+      "status": "done",
+      "verdict": "reference",
+      "summary": "The discipline finally took. The receptor-glow builder measured the reference itself before touching anything \u2014 five rays into open floor on two frames \u2014 found it crosses 5 percent of ring-peak brightness at almost exactly one ring diameter, then took three measured steps and re-captured after each, deliberately stopping just short rather than sailing past. Ours now falls under 5 percent at 56 units unlit against the reference's 58. Adjacent receptors stopped merging: the background floor between two lamps collapsed from 65 to 0.8 out of 255. And the beam builder refused two of its three assigned tasks, proving with numbers that they had already been closed in round 2 and that the brief was quoting stale figures. That is the right call and it saved a wasted turn.",
+      "gap": "Two faults were mine. My briefs quoted the previous round's critic instead of measuring HEAD, so a builder spent its turn disproving the brief. And the trace performance test was lying: it timed a synthetic empty box where nothing absorbs light, reported 11 ms, and four agents in a row correctly sensed the number was unrepresentative and dismissed it as machine noise. Each was right that the test was bad and wrong that nothing was there \u2014 the real distribution on a real level is a 0.98 ms median with an 8.97 ms 99th percentile, which is GC pressure from allocating 200 segment objects per trace, felt as a hitch while dragging.",
+      "shots": [
+        {
+          "src": "web/r3-dispersion-fixed.jpg",
+          "caption": "Receptor glow pulled back \u2014 the fan is legible again"
+        },
+        {
+          "src": "web/r3-folding.jpg",
+          "caption": "Folded beam, mirror silhouettes, protractor"
+        },
+        {
+          "src": "web/r3-solvedBoard.jpg",
+          "caption": "All three receptors satisfied"
+        },
+        {
+          "src": "web/r3-fresh.jpg",
+          "caption": "Emitter, beam, three lamps"
         }
       ]
     }
