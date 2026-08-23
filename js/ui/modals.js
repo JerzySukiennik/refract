@@ -39,12 +39,17 @@ function bestByIndex(index) {
   return bestFor(lvl.id);
 }
 
-// A level is open if it is the first, or the level before it has been cleared.
+/* A level is open if it is the first, or anything at or after it has been cleared.
+   The old rule walked forward and stopped at the first gap, which made the panel show an
+   impossible progression whenever a level was reached out of order — through the level
+   select, or through the capture harness, which is where it was caught: the shipped
+   r4-levelsGrid frame reads `04 SWITCHBACK — BEST 4 / PAR 4` next to `03 BEHIND THE PILLAR —
+   LOCKED`, i.e. a game that cleared level 4 without unlocking level 3. Clearing level n now
+   opens everything up to n + 1, so a cleared level can never sit above a locked one. */
 function unlockedThrough() {
   let n = 0;
-  for (let i = 1; i < LEVELS.length; i++) {
-    if (bestByIndex(i - 1) === null) break;
-    n = i;
+  for (let i = 0; i < LEVELS.length; i++) {
+    if (bestByIndex(i) !== null && i + 1 > n) n = i + 1;
   }
   return n;
 }
@@ -161,8 +166,15 @@ function levelsPanel() {
   return {
     className: 'panel panel-levels',
     label: 'Level select',
+    /* The panel's masthead is a heading plus a caption, not one --fs-micro run: this surface
+       has no reference counterpart, and it was the one place in the build where every text
+       run was set at the same size. `LEVELS` takes --fs-panel-title (1.54x the card meta's
+       cap) and the count stays at --fs-micro beside it. */
     html:
-      '<p class="panel-head">LEVELS &middot; ' + cleared + ' / ' + LEVELS.length + ' CLEARED</p>' +
+      '<header class="levels-head">' +
+        '<h2 class="levels-title"><span class="gw">LEVELS</span></h2>' +
+        '<p class="levels-count">' + cleared + ' / ' + LEVELS.length + ' CLEARED</p>' +
+      '</header>' +
       '<div class="level-grid">' + cells + '</div>' +
       '<div class="panel-actions"><button type="button" class="btn" data-act="close"><span class="gw">CLOSE</span></button></div>',
   };

@@ -59,6 +59,20 @@
   --fs-btn: clamp(5.5px, calc(var(--board-size) * 0.01104), 11px);
   --fs-small: clamp(8.5px, calc(var(--board-size) * 0.0150), 14px);
   --fs-solved: clamp(28px, calc(var(--board-size) * 0.0563), 54px);
+  /* The one heading role that is OURS, not the reference's: the levels panel has no
+     counterpart in the footage, and it was set entirely at --fs-micro — 73 of its 74 text
+     runs at one size, a type range of 1.00x on the largest surface in the game outside the
+     board. Every cap height in this chrome resolves to (pre-widening size) x 0.696, because
+     the --gw-k widening is cancelled by --gw-y vertically, so a 1.4-1.6x cap step over the
+     card meta is exactly a 1.4-1.6x step over --fs-micro.
+
+     Expressed as a MULTIPLE of --fs-micro rather than as its own clamp on --board-size: the
+     first version was `clamp(9px, calc(var(--board-size) * 0.0190), 16px)`, which measured
+     1.54x on desktop and then INVERTED on a phone — (pointer: coarse) floors --fs-micro at
+     9.5 px while a 350 px board drove this term down onto its own 9 px floor, so the heading
+     came out 11.93 px against a 12.59 px card meta. Tied to --fs-micro the step is 1.55x at
+     every breakpoint by construction. */
+  --fs-panel-title: calc(var(--fs-micro) * 1.55);
 
   /* ---- LETTERFORM WIDTH ----
      REFERENCE 3 states the target itself: ink width / cap height measures 0.62-0.77. Share
@@ -409,11 +423,18 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
   text-align: center;
 }
 
-/* The strip sits at z 10, above the dim at z 5, so behind an open panel it stayed fully
-   bright and restated whatever the panel was already saying — the solve capture read
-   SOLVED twice, once in the panel and once under the board. A panel owns the screen while
-   it is up. */
-html[data-modal="open"] .board-strip { opacity: 0; }
+/* This used to be `opacity: 0`, taking the strip to nothing whenever a panel opened. The
+   reason it was added is gone: the duplication it fixed was the strip reading SOLVED under a
+   panel that already said SOLVED, and js/ui/hud.js now hands the strip to USED / PAR the
+   moment the board is solved (contextualHint, `ambient`), so the sentence is no longer
+   repeated. What was left was an inconsistency a critic could measure — comparing the solved
+   board against the solved panel, title / chip / dock / badge peaks are identical to three
+   decimal places (dim factor 1.000, because #dim-layer sits at z 5 and #hud at z 10) while
+   this one element went to zero. The reference keeps its own readout legible under its solve
+   panel (ref_038, y 622-634). So the strip stays, and no chrome element reacts to a panel.
+   The rule is kept as an explicit no-op marker rather than deleted, because "why is the
+   strip visible under a panel" is a question that has now been answered twice. */
+html[data-modal="open"] .board-strip { opacity: 1; }
 
 .board-strip .is-hidden { display: none; }
 
@@ -422,7 +443,17 @@ html[data-modal="open"] .board-strip { opacity: 0; }
   font-size: calc(var(--fs-micro) * var(--gw-k));
   letter-spacing: var(--tr-hint);
   text-indent: var(--tr-hint);
-  color: var(--ink-dim);
+  /* CONTRAST, not fidelity. The hint is the game's only teaching text and it is on screen in
+     every level, at a 4.5 css px cap — body text by WCAG's definition, so its floor is 4.5:1
+     and not the 3:1 large-text one. --ink-dim (#575557) on the board's black measures 2.84:1
+     and fails both. Round 3 moved the strip clear of the brick, which took it from the
+     reference's own 1.31:1 (#634A48 on #815751, REFERENCE.md 10.2 item 9 flags it as a
+     defect) to 2.84, then stopped on the reference's token. This goes one step past it, to
+     the value that lands ON the floor rather than past it: --ink-soft (#767478) measures
+     4.53:1 against a target of 4.50. The next token up, --ink-mid (#858286), is 5.6:1 and
+     starts to compete with the title. --ink-soft is also already the dock label's colour, so
+     nothing new enters the palette. */
+  color: var(--ink-soft);
   /* 1.5 at the pre-widening size. */
   line-height: 1.1321;
   transform: scaleY(var(--gw-y));
@@ -451,7 +482,9 @@ html[data-modal="open"] .board-strip { opacity: 0; }
   font-size: calc(var(--fs-micro) * var(--gw-k));
   letter-spacing: var(--tr-micro);
   text-indent: var(--tr-micro);
-  color: var(--ink-dim);
+  /* Same strip, same floor — see .hint-line. The two share the row and must not read as two
+     different tiers of importance. */
+  color: var(--ink-soft);
   line-height: var(--gw-y);
   transform: scaleY(var(--gw-y));
   transition: color var(--t-mid) var(--ease);
@@ -805,13 +838,65 @@ html[data-modal="open"] .board-strip { opacity: 0; }
   max-width: min(90vw, 470px);
   padding: clamp(14px, calc(var(--board-size) * 0.0301), 26px)
            clamp(14px, calc(var(--board-size) * 0.0301), 26px);
+  /* One width for the head and the grid, so the rule under the heading is exactly as long as
+     the row of cards below it. */
+  --levels-w: min(76vw, 404px);
+}
+
+/* The panel's own masthead. LEVELS carries the size step; the count is a caption on the same
+   baseline, kept at --fs-micro and at --ink-tag so the pair reads as one line with a
+   dominant and a subordinate half rather than as two headings. */
+.levels-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: var(--levels-w);
+  margin: 0 auto clamp(8px, calc(var(--board-size) * 0.0177), 15px);
+  padding-bottom: clamp(5px, calc(var(--board-size) * 0.0115), 10px);
+  border-bottom: 1px solid var(--line-dead);
+  text-align: left;
+}
+
+.levels-title {
+  margin: 0;
+  font-size: var(--fs-panel-title);
+  font-weight: 400;
+  line-height: 1;
+  color: var(--ink-title);
+  white-space: nowrap;
+}
+
+/* Same construction as .level-name: the box keeps the unwidened size, the inner run carries
+   the 1.325x widening and the matching --gw-y squash, so cap height is --fs-panel-title x
+   0.696 and the title's tracking is the title tracking. */
+.levels-title .gw {
+  letter-spacing: var(--tr-title);
+  line-height: 0.7547;
+}
+
+.levels-count {
+  margin: 0;
+  white-space: nowrap;
+  font-size: calc(var(--fs-micro) * var(--gw-k));
+  letter-spacing: var(--tr-micro);
+  color: var(--ink-tag);
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
 }
 
 .level-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  /* Content-sized rows broke the grid's rhythm exactly once: at 720 x 694 the computed
+     template read 71.56 / 71.56 / 71.56 / 58.74 / 71.56 / 71.56 px, because row 4 is the one
+     row where all four names fit on a single line. A 17.9 % discontinuity in the middle of a
+     grid whose every column is identical and whose every gutter is exactly 5 px. `1fr` on an
+     auto-height grid container resolves every row to the tallest row's content, so the six
+     rows are equal by construction and stay equal if a level is renamed. */
+  grid-auto-rows: 1fr;
   gap: 5px;
-  width: min(76vw, 404px);
+  width: var(--levels-w);
   text-align: left;
 }
 
@@ -842,12 +927,21 @@ html[data-modal="open"] .board-strip { opacity: 0; }
   transform: scaleY(var(--gw-y));
 }
 
+/* The card's own headline: one size step over its number and its score line, and a two-token
+   brightness step on top of it (--ink-strong against --ink-tag). Clamped to two lines so one
+   long name cannot lift every row in the grid — 'FEEDING THE SECOND' and 'THE LONG WAY DOWN'
+   are the longest of the 24 and both wrap to two. */
 .level-cell .cell-name {
-  font-size: calc(var(--fs-micro) * var(--gw-k));
+  font-size: calc(var(--fs-micro) * var(--gw-k) * 1.12);
   letter-spacing: -0.0019em;   /* effective 0.16em */
   line-height: 1.0189;         /* 1.35 at the pre-widening size */
   transform: scaleY(var(--gw-y));
-  color: inherit;
+  color: var(--ink-strong);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .level-cell .cell-score {
@@ -861,6 +955,12 @@ html[data-modal="open"] .board-strip { opacity: 0; }
 
 .level-cell.is-open { border-color: var(--line); }
 .level-cell.is-open:hover { border-color: #56525c; background: #0d0a13; color: var(--ink-title); transform: translateY(-1px); }
+/* .cell-name now carries its own colour for the hierarchy step, so the states that used to
+   brighten the whole cell have to name it explicitly or the headline would sit still while
+   everything under it moved. */
+.level-cell.is-open:hover .cell-name,
+.level-cell.is-current .cell-name,
+.level-cell:focus-visible .cell-name { color: var(--ink-title); }
 /* Cleared, current and beaten-par are all told apart by BRIGHTNESS — a green border, a blue
    border and an amber score were the three loudest hues in the whole build. */
 .level-cell.is-done { border-color: rgba(201, 198, 204, 0.30); }
@@ -870,7 +970,11 @@ html[data-modal="open"] .board-strip { opacity: 0; }
 /* 23 of 24 cells are locked on a first run, so this opacity decides whether the grid is a
    list or a smudge. At 0.34 the names composited to ~#111 on the panel — 1.2:1. */
 .level-cell.is-locked { opacity: 0.62; }
-.level-cell.is-locked .cell-name { color: var(--ink-dim); }
+/* --ink-soft, not --ink-dim: the 0.62 opacity above is applied to the composite, so a locked
+   name set at #575557 landed near #363436 on the panel fill — 1.7:1, a smudge. #767478 under
+   the same opacity composites to about 2.9:1, still visibly recessive against the open
+   cells' --ink-strong headline but actually readable. */
+.level-cell.is-locked .cell-name { color: var(--ink-soft); }
 .level-cell.is-locked .cell-no,
 .level-cell.is-locked .cell-score { color: var(--ink-tag); }
 .level-cell:focus-visible { outline: 2px solid var(--sig-mid); outline-offset: 2px; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35); }
@@ -1128,7 +1232,15 @@ html[data-modal="open"] .board-strip { opacity: 0; }
   .hud-top { grid-template-columns: 1fr; }
   .chip-row { justify-content: flex-start; }
   .level-name .gw { letter-spacing: -0.0019em; }   /* effective 0.16em */
-  .level-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); width: min(90vw, 404px); }
+  /* --levels-w, not a width on the grid alone: the head's rule has to stay exactly as long
+     as the row of cards under it at every width. 100 % of the panel's content box, not a vw
+     fraction: at 375 px the old `min(90vw, 404px)` resolved to 337.5 px inside a 331.7 px
+     content box and the grid overhung the panel by 6 px. A plain `100%` is not the fix — the
+     grid then makes no width demand at all and the panel shrinks to the masthead's
+     max-content, 253 px. This is the panel's own ceiling (min(90vw, 470px)) minus its 18 px
+     padding and 1 px border on each side. */
+  .panel-levels { --levels-w: min(calc(90vw - 38px), 404px); }
+  .level-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
   .panel { padding: 24px 18px; }
   /* Narrow frames: tighten tracking so the strip still fits under the board. */
   .readout { letter-spacing: -0.0019em; text-indent: -0.0019em; }

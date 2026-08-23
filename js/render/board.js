@@ -177,7 +177,39 @@ const GLASS_EDGE = scene('#B9C4CE', 1.15);
 // gain is not 0.30. Solving ACES for a 38/255 display peak gives 0.0297 scene units at the
 // grabbed ring's 1.30x, i.e. 0.0228 base against the 0.1725 the bare colour carries: gain
 // 0.132. Same treatment for the readout, measured at 64/255 on ref_010 against our 150.
-const PROTRACTOR = scene('#8A7A78', 0.132);
+//
+// ROUND 4: that solved the ring's SHAPE and left it carrying half the reference's light.
+// Integrated across the stroke over pure black at reference scale, ours came to 34 against the
+// reference's 63 — a 1.9x deficit — because 0.30 got applied on top of an already attenuated
+// colour and the ACES solve above then took another bite out of it.
+//
+// Where the round-4 critic and this file part company is WHY. Their reading had the reference
+// as a 2.7 px stroke peaking at 45 against our 1.5 px peaking at 29, i.e. a width defect. That
+// came out of a ring centre 1.3 px off: re-measuring ref_010's own ring by fitting the centre
+// that maximises the annulus mean, (146.5, 277.5) rather than (147.7, 277.0), collapses their
+// flat 2 px plateau of 25-26 into a single peak of 37.7 with a 1.6 px FWHM. The integrated
+// figure is the same either way (62 against 65), because a centring error smears a profile
+// without destroying its area — which is why the 1.9x light deficit was real and the width
+// claim was an artifact of the measurement. Our stroke at 1.05 u rendered 1.30 px FWHM against
+// the reference's 1.62; it was never half as wide.
+//
+// So: gain 0.132 -> 0.176 to land the peak on the reference's 37.7, and a small widening to
+// land the FWHM on 1.62. Measured after, same estimator on both sides: peak 39.6 against the
+// reference's 37.7, FWHM 1.52 against 1.62, integrated 62.0 against 63.
+const PROTRACTOR = scene('#8A7A78', 0.176);
+// Gaussian half-width of the hairline, in board units. exp(-(x/s)^2) has FWHM 1.665*s and the
+// board renders 1000 u across 568 px in a 720 px frame, i.e. 0.567 px/u, but capture adds its
+// own broadening, so this is calibrated from two measured points rather than from the algebra:
+// s = 1.05 renders 1.30 px and s = 2.60 renders 2.44 px, which is 0.735 px per unit off an
+// 0.53 px floor. The reference's 1.62 px therefore wants s = 1.48.
+const RING_SIGMA = 1.48;
+// How much the stroke thickens over the arc the handle is riding while a rotation drag is
+// live. Held at the old ratio of the base width, so grabbing still reads as a change.
+const RING_SIGMA_GRAB = 1.76;
+// The ghost's ring is a proposal, not a selection. It rides the same 0.42 body alpha the ghost
+// sprite itself uses, so the instrument and the silhouette it annotates read as one object at
+// one weight rather than as a solid ring around a transparent optic.
+const GHOST_RING_WEIGHT = 0.42;
 const READOUT = scene('#9A9298', 0.255);
 
 // A matte disc, not a lamp. scene('#F8F8F8') would be ~2.5 scene units, which is 3.5x over
@@ -202,14 +234,30 @@ const REJECT_EDGE = scene('#E8665E', 0.55);
 // so our cloth competed with its own ring. The shader's fold and rim terms multiply the
 // authored colour up by about 1.25x, so each unlit entry is authored at the measured
 // reference colour divided by 1.25, and the old unlit colour becomes the LIT one.
+//
+// The LIT ring is authored as a multiple of its own unlit radiance, not as a second display
+// colour. Authoring it as a near-white display hex was the whole cause of the lit receptor
+// blowing a 250 px saturated disc: `scene()` inverse-tonemaps, and a channel at 249/255
+// inverse-maps to 2.8 scene units, which core+glow+amp then took to 5.3 — clipped at 254/255
+// and nearly eight times over the bloom prefilter threshold (0.72), so almost all of that
+// surplus went straight into the six-step bloom pyramid. Measured on the b1 solved capture
+// against ref_030, our lit blue read 93 / 78 / 45 % of its own ring peak at 44 / 58 / 88 u
+// against the reference's 69 / 53 / 29, and its own-channel core sat clipped from r=0 to
+// r=32 u where the reference peaks at 243.
+//
+// LIT_GAIN is therefore a bounded SCENE-space multiplier. The ACES curve does the whitening
+// on its own — blue goes from a displayed (38,76,143) to about (148,207,240) — so a lit ring
+// still reads as a lamp turned up without ever leaving the part of the curve where a halo is
+// still a halo.
+const LIT_GAIN = 3.6;
 const RECEPTORS = {
-  blue: { ring: [scene('#26549C'), scene('#43AAF9', 1.15)], flag: [scene('#112E60'), scene('#2E5CAE')] },
-  green: { ring: [scene('#6EAF74'), scene('#B1F5B5', 1.15)], flag: [scene('#3A653A'), scene('#5C9A60')] },
-  orange: { ring: [scene('#9C682C'), scene('#EDB950', 1.15)], flag: [scene('#522F12'), scene('#A8683A')] },
-  red: { ring: [scene('#9C3030'), scene('#F96060', 1.15)], flag: [scene('#602020'), scene('#B23636')] },
-  yellow: { ring: [scene('#9C9330'), scene('#F5E85C', 1.15)], flag: [scene('#605A20'), scene('#9E9438')] },
-  cyan: { ring: [scene('#2A9098'), scene('#5CE8F5', 1.15)], flag: [scene('#20585E'), scene('#2FA0AB')] },
-  violet: { ring: [scene('#6A3A9C'), scene('#B47CF9', 1.15)], flag: [scene('#442464'), scene('#7448B0')] },
+  blue: { ring: [scene('#26549C'), scene('#26549C', LIT_GAIN)], flag: [scene('#112E60'), scene('#2E5CAE')] },
+  green: { ring: [scene('#6EAF74'), scene('#6EAF74', LIT_GAIN)], flag: [scene('#3A653A'), scene('#5C9A60')] },
+  orange: { ring: [scene('#9C682C'), scene('#9C682C', LIT_GAIN)], flag: [scene('#522F12'), scene('#A8683A')] },
+  red: { ring: [scene('#9C3030'), scene('#9C3030', LIT_GAIN)], flag: [scene('#602020'), scene('#B23636')] },
+  yellow: { ring: [scene('#9C9330'), scene('#9C9330', LIT_GAIN)], flag: [scene('#605A20'), scene('#9E9438')] },
+  cyan: { ring: [scene('#2A9098'), scene('#2A9098', LIT_GAIN)], flag: [scene('#20585E'), scene('#2FA0AB')] },
+  violet: { ring: [scene('#6A3A9C'), scene('#6A3A9C', LIT_GAIN)], flag: [scene('#442464'), scene('#7448B0')] },
 };
 const POLE = [scene('#7A8FAD'), scene('#AFC5F6', 1.05)];
 
@@ -307,10 +355,12 @@ uniform vec3 uMortar;
 uniform sampler2D uDetail;
 uniform float uDetailMix;
 ${LIGHT_BLOCK}
-float cornerSeam(float a, float b) {
-  float within = step(a, ${WALL_T.toFixed(1)}) * step(b, ${WALL_T.toFixed(1)});
-  return within * exp(-pow((a - b) / 1.7, 2.0));
-}
+// There is deliberately no corner mitre here. The outer ring is four rectangles, but the bond
+// is computed in board space and runs straight through their junctions, so a mitre is only a
+// seam to draw across a wall that has none. Measured on ref_001.jpg the 45-degree diagonal
+// through each outer corner reads 1.00 / 0.92 / 1.00 / 0.98 of its two parallel neighbours —
+// no seam at all — against ours at 0.91 / 0.86 / 0.94 / 0.90, a dark diagonal at every corner
+// with brick courses terminating against it on both sides.
 void main() {
   vec2 h = uSize * 0.5;
   vec2 lo = -h - vec2(uGrow.x, uGrow.z);
@@ -375,16 +425,21 @@ void main() {
   float cx = clamp(fu / ${BRICK_LEN.toFixed(2)}, 0.0, 1.0);
   float bedLit = 1.0 - smoothstep(0.0, 0.34, cy);
   float bedDark = smoothstep(0.58, 1.0, cy);
-  float headLit = 1.0 - smoothstep(0.0, 0.09, cx);
-  float headDark = smoothstep(0.91, 1.0, cx);
+  // The head joints are weighted almost as heavily as the bed joints, because on a VERTICAL
+  // wall they are the only masonry crossing the thickness: with them weak the left band's
+  // modulation measured 1.7 % against the reference's 3.4 % even while the horizontal bands
+  // were already over. Their ramps are also wider than the bed's, since alternate courses
+  // offset by half a brick and averaging down the wall halves whatever amplitude they carry.
+  float headLit = 1.0 - smoothstep(0.0, 0.13, cx);
+  float headDark = smoothstep(0.86, 1.0, cx);
 
   vec3 col = uMid;
-  col = mix(col, uLight, 0.90 * max(bedLit, headLit * 0.62));
-  col = mix(col, uDark, 0.82 * max(bedDark, headDark * 0.62));
+  col = mix(col, uLight, 0.66 * max(bedLit, headLit * 0.88));
+  col = mix(col, uDark, 0.60 * max(bedDark, headDark * 0.88));
   // What is left of the slab-wide ramp. The rim rides tFar, not t, so on a thick slab the
   // far-edge lip stays ON the far edge instead of flooding the belly once t saturates.
-  col = mix(col, uLight, 0.085 * (1.0 - t));
-  col = mix(col, uDark, 0.085 * t);
+  col = mix(col, uLight, 0.045 * (1.0 - t));
+  col = mix(col, uDark, 0.045 * t);
   col = mix(col, uRim, smoothstep(0.10, 0.0, tFar) * 0.35);
 
   // Per-brick tone. Measured brick-face to brick-face on a beam-free band, ref_001.jpg runs
@@ -430,7 +485,7 @@ void main() {
   // interior slab in a symmetric skirt.
   vec4 open = clamp(1.0 - abs(uFace - 1.0), 0.0, 1.0);
   vec4 outer = clamp(uFace - 1.0, 0.0, 1.0);
-  vec4 farR = smoothstep(vec4(5.5), vec4(0.0), dist);
+  vec4 farR = smoothstep(vec4(3.8), vec4(0.0), dist);
   vec4 litR = smoothstep(vec4(2.0), vec4(0.0), dist);
   // (-X, +X, -Y, +Y): x and z look back toward the key, y and w away from it.
   float darkK = max(farR.y * max(open.y, outer.y * 0.55), farR.w * max(open.w, outer.w * 0.55));
@@ -441,7 +496,7 @@ void main() {
   // the interior slabs read as rectangles pasted onto somebody else's wall.
   vec4 lipR = smoothstep(vec4(5.0), vec4(0.4), dist);
   float lipK = max(lipR.x * max(open.x, outer.x), lipR.z * max(open.z, outer.z));
-  col *= 1.0 + 0.13 * lipK;
+  col *= 1.0 + 0.07 * lipK;
   // litR is retained as a hairline softening right at the lit arris, so the lip above does
   // not terminate on a hard antialiased line.
   float softK = max(litR.x * max(open.x, outer.x), litR.z * max(open.z, outer.z));
@@ -451,7 +506,13 @@ void main() {
   if (dot(nrm, nrm) < 0.01) nrm = mix(vec2(sign(vLocal.x), 0.0), vec2(0.0, sign(vLocal.y)), uHoriz);
   nrm = normalize(nrm + vec2(1e-5));
   vec3 lit = gatherLight(vBoard, nrm);
-  col = col * (1.0 + 0.85 * lit) + lit * col * 0.9 + lit * 0.10;
+  // Light MULTIPLIES into the albedo. The flat additive term this used to carry (+0.10 per
+  // unit of gathered light, independent of the surface) was laid straight on top of the
+  // brick, so a beam-lit slab rose 3x in brightness while its
+  // along-wall texture RMS collapsed from 5.4-8.8 % to 0.4-0.5 % — light painted over the
+  // brick instead of falling on it, which is the signature of a flat additive term. The one
+  // surviving additive is scaled by the albedo itself, so it cannot wash a course flat.
+  col = col * (1.0 + 1.75 * lit) + albedo * lit * 0.16;
 
   // Contact bleed: brick this warm does not stop dead at its own edge. Only open faces
   // spill, so the outer boundary of the board stays a hard edge.
@@ -584,8 +645,13 @@ void main() {
   // already carried by the ring colour (roughly 2x), the interior disc, amp, the flag and
   // the pole; the pool only has to follow, not lead.
   float near = exp(-x / mix(7.5, 8.0, uLit));
-  float far = exp(-x / mix(30.0, 28.0, uLit));
-  float pool = (0.50 * near + 0.20 * far) * mix(1.0, 1.05, uLit);
+  // The LIT far lobe is longer than the unlit one, which is what the reference does: measured
+  // own-channel on ref_030 the lit ring still reads 53 % of its own stroke peak one ring
+  // diameter out and 29 % at three, where the unlit ring on ref_001 is at 18 % and 9 %. With
+  // the lit radiance no longer eight times over the bloom threshold this lobe has to carry
+  // the far field on its own instead of borrowing it from a blown-out core.
+  float far = exp(-x / mix(30.0, 40.0, uLit));
+  float pool = (0.50 * near + mix(0.20, 0.23, uLit) * far) * mix(1.0, 1.05, uLit);
   pool *= smoothstep(uRadius - uStroke * 0.6, uRadius + uStroke * 0.9, d);
   pool *= smoothstep(1.0, 0.80, d / max(uHalf.x, 1e-3));
   // A lamp inside the room cannot light the far side of the wall it stands against: the
@@ -779,7 +845,19 @@ void main() {
   float halo = exp(-max(d, 0.0) / 3.4) * smoothstep(-2.0, 0.6, d) * (0.03 + 0.62 * uLitAmount);
 
   vec3 col = body;
-  vec3 add = uEdge * edge * (0.70 + 2.35 * uLitAmount);
+  // ROUND 4: at reference scale the lower edge of a LIT prism rose to 228/255 over a 2.0 px
+  // FWHM. REFERENCE.md 6.2 wants 1.5-2 px at ~195/255, and ref_030's own lit prism measures a
+  // 120/255 peak over 3.1 px -- softer and wider than either. So the width is inside spec and
+  // the height is between 17 % and 90 % hot depending on which source you believe. That excess
+  // is not cosmetic: the bloom prefilter thresholds at 0.72, so everything above it gets
+  // multiplied through a six-step blur into the wash that swallows the protractor ring around
+  // a selected prism.
+  //
+  // Only the LIT term comes down. The unlit constant is what draws an untouched prism sitting
+  // in the dark and it was never the thing measuring hot. Aimed at the contract's 195 rather
+  // than at ref_030's 120: the outline is the prism's entire silhouette, and halving it would
+  // be an overshoot dressed up as a fix.
+  vec3 add = uEdge * edge * (0.70 + 1.30 * uLitAmount);
   add += mix(uEdge, uLitColor, 0.85 * litK) * path * (0.10 + 1.30 * uLitAmount);
   add += mix(uEdge, uLitColor, 0.7 * litK) * halo;
 
@@ -822,7 +900,7 @@ void main() {
   // ticks are forbidden (REFERENCE.md 10.1 item 13) and a radius needle would lie exactly
   // along a mirror's own rod, so the ring instead thickens over the ~60 degree arc the
   // handle is riding and the whole circle picks up a little light.
-  float sigma = 1.05 + 1.25 * uGrab * smoothstep(uR * 0.58, uR * 0.12, hd);
+  float sigma = ${RING_SIGMA.toFixed(2)} + ${RING_SIGMA_GRAB.toFixed(2)} * uGrab * smoothstep(uR * 0.58, uR * 0.12, hd);
   float ring = exp(-pow((d - uR) / sigma, 2.0)) * (1.0 - smoothstep(collar + 1.2, collar - 0.4, hd));
 
   // A 3 px glint, not a lamp.
@@ -1254,9 +1332,9 @@ export function createBoardRenderer(gl) {
   }
 
   // Face states, in the wall's own frame (-X, +X, -Y, +Y): 0 joined, 1 open, 2 outer.
-  // The outer ring is four rectangles that must read as one continuous mitred frame, so the
+  // The outer ring is four rectangles that must read as one continuous run of brick, so the
   // faces where they meet are marked joined — no inner ramp, no bleed, and a small overlap
-  // so the two antialiased edges do not leave the black notch the critic measured.
+  // so the two antialiased edges do not leave a black notch.
   const FACE_JOINED = 0;
   const FACE_OPEN = 1;
   const FACE_OUTER = 2;
@@ -1268,25 +1346,21 @@ export function createBoardRenderer(gl) {
       x: 0, y: 0, w: BOARD, h: WALL_T,
       face: [FACE_OUTER, FACE_OUTER, FACE_OUTER, FACE_OPEN],
       grow: [0, 0, 0, 0],
-      mitre: [1, 1, 0, 0],
     });
     out.push({
       x: 0, y: BOARD - WALL_T, w: BOARD, h: WALL_T,
       face: [FACE_OUTER, FACE_OUTER, FACE_OPEN, FACE_OUTER],
       grow: [0, 0, 0, 0],
-      mitre: [0, 0, 1, 1],
     });
     out.push({
       x: 0, y: WALL_T, w: WALL_T, h: BOARD - WALL_T * 2,
       face: [FACE_OUTER, FACE_OPEN, FACE_JOINED, FACE_JOINED],
       grow: [0, 0, JOIN_GROW, JOIN_GROW],
-      mitre: [0, 0, 0, 0],
     });
     out.push({
       x: BOARD - WALL_T, y: WALL_T, w: WALL_T, h: BOARD - WALL_T * 2,
       face: [FACE_OPEN, FACE_OUTER, FACE_JOINED, FACE_JOINED],
       grow: [0, 0, JOIN_GROW, JOIN_GROW],
-      mitre: [0, 0, 0, 0],
     });
     if (level && Array.isArray(level.walls)) {
       for (const w of level.walls) {
@@ -1308,7 +1382,6 @@ export function createBoardRenderer(gl) {
             face[2] === FACE_JOINED ? JOIN_GROW : 0,
             face[3] === FACE_JOINED ? JOIN_GROW : 0,
           ],
-          mitre: [0, 0, 0, 0],
         });
       }
     }
@@ -1333,12 +1406,10 @@ export function createBoardRenderer(gl) {
     for (const w of wallRects(level)) {
       const face = w.face || [FACE_OPEN, FACE_OPEN, FACE_OPEN, FACE_OPEN];
       const grow = w.grow || [0, 0, 0, 0];
-      const mitre = w.mitre || [0, 0, 0, 0];
       gl.uniform2f(u.uSize, w.w, w.h);
       gl.uniform1f(u.uHoriz, w.w >= w.h ? 1 : 0);
       gl.uniform4f(u.uFace, face[0], face[1], face[2], face[3]);
       gl.uniform4f(u.uGrow, grow[0], grow[1], grow[2], grow[3]);
-      gl.uniform4f(u.uMitre, mitre[0], mitre[1], mitre[2], mitre[3]);
       place(u, w.x + w.w / 2, w.y + w.h / 2, w.w / 2 + WALL_MARGIN, w.h / 2 + WALL_MARGIN, 0);
       drawQuad();
     }
@@ -1493,7 +1564,10 @@ export function createBoardRenderer(gl) {
       // The colour the ring throws into the room, normalised so a dim palette entry still
       // lights its own pole and pennant at the same strength as a bright one.
       const ringPeak = Math.max(ring[0], ring[1], ring[2], 1e-4);
-      const glowK = (0.30 + 0.55 * lit) * ringPeak;
+      // The lit ring's own radiance no longer carries a 14x jump, so the pole-and-pennant
+      // spill takes the difference here instead. It still lands under what it used to emit,
+      // because the old value was part of the same wash.
+      const glowK = (0.30 + 1.55 * lit) * ringPeak;
       const glowCol = new Float32Array([
         (ring[0] / ringPeak) * glowK,
         (ring[1] / ringPeak) * glowK,
@@ -1572,15 +1646,19 @@ export function createBoardRenderer(gl) {
     else drawMirror(o.x, o.y, o.angle || 0, alpha, scaleK, reject, ghost);
   }
 
-  function drawProtractor(o, scaleK, grabbed) {
+  // `weight` is the instrument's own opacity, separate from `scaleK`, which is the placement
+  // scale-in. The two coincide for a selected optic and part company for the drag ghost, which
+  // is drawn at full size but at proposal weight.
+  function drawProtractor(o, scaleK, grabbed, weight) {
     const a = normAngle(o.angle || 0);
     const R = RING_R * scaleK;
+    const w = weight === undefined ? scaleK : weight;
     const u = use(progs.protractor);
     gl.uniform1f(u.uR, R);
     gl.uniform3fv(u.uColor, PROTRACTOR);
     gl.uniform3fv(u.uHandleFill, HANDLE_FILL);
     gl.uniform2f(u.uHandle, Math.cos(a) * R, -Math.sin(a) * R);
-    gl.uniform1f(u.uAlpha, scaleK);
+    gl.uniform1f(u.uAlpha, w);
     gl.uniform1f(u.uGrab, grabbed ? 1 : 0);
     place(u, o.x, o.y, R + 30, R + 30, 0);
     drawQuad();
@@ -1593,7 +1671,7 @@ export function createBoardRenderer(gl) {
       gl.uniform1i(ut.uTex, 0);
       gl.uniform2f(ut.uSize, textHalfW * 2, textHalfH * 2);
       gl.uniform3fv(ut.uColor, READOUT);
-      gl.uniform1f(ut.uAlpha, Math.min((scaleK - 0.88) / 0.12, 1));
+      gl.uniform1f(ut.uAlpha, Math.min((scaleK - 0.88) / 0.12, 1) * (w / Math.max(scaleK, 1e-3)));
       // Centred on the ring's centre, its own centre READOUT_GAP above the ring's top — not
       // beside the handle, and not resting on the ring.
       place(ut, o.x, o.y - R - READOUT_GAP * scaleK, textHalfW, textHalfH, 0);
@@ -1662,6 +1740,15 @@ export function createBoardRenderer(gl) {
       else gl.uniform3f(ug.uColor, 0.075, 0.088, 0.12);
       place(ug, ghost.x, ghost.y, span + halo + 4, span + halo + 4, 0);
       drawQuad();
+
+      // The ghost used to answer "where" and say nothing about "at what angle", so a mirror
+      // was always released at DEFAULT_ANGLE and the player only found out what they had
+      // built after the piece existed and was selected. The instrument that answers that
+      // question already exists; it was only ever drawn for a selected optic. Drawing it at
+      // proposal weight over the ghost turns the place-drag into a preview of the actual
+      // placement, which the reference footage never does at any point. A refusal gets no
+      // ring: nothing is going to be placed, so there is no angle to read.
+      if (!bad) drawProtractor(ghost, 0.94, false, GHOST_RING_WEIGHT);
     }
 
     const selId = state ? state.selectedId : null;

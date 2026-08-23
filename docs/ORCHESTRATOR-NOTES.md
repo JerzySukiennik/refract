@@ -334,6 +334,25 @@ and it will be worse on the target Intel MacBook.
 
 The test now asserts p50 and p99 separately on the heaviest real level and names the cause.
 
+**CORRECTION, after round 4 measured it properly.** I was half wrong here, and in the more
+embarrassing direction. Replacing the instrument was right; the number I then reported from
+it was not. Round 4's builder measured HEAD before touching anything and got **p50 0.209 ms,
+p99 0.892 ms, 32/32 passing** — with a GC PerformanceObserver over 3000 traces showing the
+worst single stop-the-world pause at 0.384 ms, not nine. My 8.97 ms p99 came from a single
+sample taken while fifteen agents were still hammering the machine.
+
+So the four agents who called it environmental were closer to right than I was. What was
+real underneath: the tracer genuinely allocated **263 KB per trace**, which is worth fixing
+on principle and on the target Intel MacBook even though this machine absorbs it. Round 4
+pooled it behind an explicit opt-in contract with named lanes — 263 KB to 17 KB, GC events
+down 69 % — and the drag path in `state.js` now borrows.
+
+**Two lessons, and the second is the one I keep relearning.** First: when several
+independent agents dismiss the same signal, suspect the instrument. Second: having fixed the
+instrument, do not then trust a single reading from it taken under load. Measure on a quiet
+machine, more than once, before writing a number into a brief that another agent will spend
+its turn on.
+
 **Lesson: when several independent agents dismiss the same signal, the usual fault is the
 instrument, not the signal.** Fix the instrument before either believing or dismissing it.
 

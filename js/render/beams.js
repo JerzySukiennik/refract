@@ -71,7 +71,20 @@ const DEFAULTS = {
   // raised to chase the brightness of a fan that is dim because its beam has already been
   // through three mirrors -- that dimming is the contract's 10 % per bounce, not a gain
   // error, and 0.46 is the clip line.
-  spectralGain: 0.095,
+  //
+  // ROUND 4. Re-measured on the clean free-field rig (a generation-0 white beam entering a
+  // prism at 45 deg, no receptor within reach of the wedge), the fan peaks at 0.380 / 0.392
+  // / 0.400 / 0.404 at R = 45 / 60 / 80 / 100 reference px against a white core of 0.827-
+  // 0.835 -- so 0.46-0.48 of the core, which is 5.3's ratio, but 10 % under 5.3's absolute
+  // 0.42-0.45 because our core is 0.83 where the reference's is 0.89. The round-4 critic
+  // measured 0.354 and -21 %; that figure was taken on a board where the fan was truncated
+  // by total internal reflection AND overlaid by a receptor halo, and it does not reproduce
+  // here. The honest gap is the smaller one, and this closes it: 0.095 -> 0.118 lifts the
+  // linear radiance by 1.24x, which at this operating point of the ACES curve is about
+  // 1.16x on screen. 0.118 was a step past the mark -- it measured 0.439 / 0.443 / 0.459 /
+  // 0.475 at those four radii against the reference's 0.43 / 0.42 / 0.42 / 0.45 -- so it is
+  // trimmed back by the measured overshoot to land ON the band rather than above it.
+  spectralGain: 0.105,
   // A dispersed ray is the same beam, only narrower in wavelength: it keeps the width of
   // the beam that entered the glass. Anything thinner stops neighbouring wavelengths
   // overlapping, and the fan degenerates into a saturated hue ramp with a knife-edge
@@ -135,7 +148,7 @@ const DEFAULTS = {
   // The amplitude itself is then one measured scalar: take the 7-reference-px core mean
   // along a long clean run out of the PNG, detrend with a 61 px mean, divide the residual
   // sigma by the local mean. The reference reads 0.72-0.81 % on ref_001 and ref_010.
-  grainAmount: 0.16,
+  grainAmount: 0.14,
   // Lattice cells per second, NOT board units per second -- the drift is applied in noise
   // space so every octave crawls at the same visual rate. 26 u/s on the old stack's
   // dominant octave was 1.76 cells/s, which is what this preserves.
@@ -190,6 +203,20 @@ const DEFAULTS = {
   // 33 x 2 px horizontal bar at the slit itself, drawn by board.js; dropping this from 0.75
   // to 0.42 moved the frame maximum only from 0.988 to 0.986. That one belongs to the prop.
   hotGain: 0.42,
+  // Scene-linear radiance of the additive mouth glow at its centre, as a multiple of
+  // whiteGain -- see the mouth-glow block in the fragment shader for why it cannot be
+  // carried by hotGain. Calibrated on the arcs behind the mouth, which is the only place it
+  // is not sitting on top of the beam or the housing: 0.40 with a gaussian lobe read
+  // 0.642 / 0.470 / 0.320 / 0.166 at 10 / 16 / 22 / 30 reference px and 0.60 with the cubic
+  // read 0.740 / 0.606 / 0.416 / 0.139, both well past the reference's
+  // 0.509 / 0.328 / 0.197 / 0.056. Inverting the composite at 22 px -- sRGB, then the ACES
+  // quadratic -- says the reference's 0.197 is 0.041 of scene radiance where 0.60 was
+  // putting 0.107 there, so 0.60 * 0.041 / 0.107 = 0.23. Measured, 0.23 landed
+  // 0.566 / 0.374 / 0.210 / 0.059 -- right shape, still 5-14 % over at every radius -- and
+  // 0.20 lands on it. Do not chase the 10 px arc any further from here: at 10 reference px
+  // the arc is mostly the HOUSING, which board.js draws, and ours is both smaller and darker
+  // than the reference's #4D4B50 block.
+  mouthGain: 0.20,
   // Display-referred shaping of the transported intensity, and the same trick coreProfile
   // uses a few dozen lines down: the reference's numbers are measured AFTER a tonemap, so
   // matching them means inverting ours.
@@ -214,17 +241,31 @@ const DEFAULTS = {
   // wanted is 0.853^(1/0.48) = 0.72, which is 0.9^3.2.
   //
   // 3.2 was fitted against the FOUR-BOUNCE endpoint and undershot the first step, which is
-  // the one the eye actually reads. Re-measured on r4-folding, the four legs' 7-reference-px
-  // core means came out 0.818 / 0.717 / 0.595 / 0.536, a -12.3 % first step against 4.5's
-  // measured -14.7 %, with the last leg at 0.655 of generation 0 against the reference's
-  // 0.565. Both ends want more shaping. The effective composite exponent measured between
-  // those two legs is 0.418, not the 0.48 assumed above, and the bracket is known on both
-  // sides -- 3.2 gives -12.3 % and 4.0 gave -18.4 % -- so the interpolation for -14.7 % is
-  // 3.5, which also pulls the fourth leg to 0.625 of generation 0. It does not reach 0.565
-  // there and is not pushed further: the reference's own generation 2 measures BRIGHTER
-  // than its generation 1 (0.805 against 0.755), so its four-point sequence carries real
-  // measurement noise and fitting the endpoint exactly would blow the first step past it.
-  intensityShape: 3.5,
+  // the one the eye actually reads.
+  //
+  // MEASURE THE LEGS ON A WINDOW THAT CONTAINS ONLY BEAM. r4-folding's top run passes under
+  // the green receptor's halo for its last third, and a window that includes it reads the
+  // generation-0 core 0.03 high and its residual spectrum almost entirely above 25 px --
+  // the receptor's glow, not the beam's grain. Every number below is measured on windows
+  // clear of every receptor and wall slab.
+  //
+  // So measured: 3.2 gives legs of 0.790 / 0.717 / 0.596 / 0.539, a -9.3 % first step with
+  // the fourth leg at 0.682 of generation 0; 3.5 gives 0.815 / 0.732 / 0.604 / 0.534,
+  // -10.1 %, fourth leg 0.655. REFERENCE.md 4.5 wants -14.7 % and 0.565. Two measured
+  // points bracket the response at 2.7 % of first step per unit of exponent -- the note
+  // that used to stand here claimed 4.0 produced -18.4 %, which this bracket contradicts
+  // and which was almost certainly measured on a contaminated window.
+  //
+  // The reference's own four points cannot both be hit: they are not monotonic (generation 2
+  // measures 0.805 against generation 1's 0.755), so the first step and the endpoint ask for
+  // different exponents -- 5.3 and 4.5 respectively. 4.5 is taken, because the endpoint is
+  // an average of three bounces and therefore the better-conditioned of the two, and because
+  // going past it would drive the last leg under the reference, which is the failure the
+  // critic already named. 4.5 was tried first and measured 0.815 / 0.706 / 0.547 / 0.445 --
+  // a -13.3 % first step but a fourth leg at 0.546, already 3 % PAST the reference. 4.3
+  // interpolates between the two measured points to put the fourth leg on 0.565 exactly and
+  // the first step at about -12.7 % of the reference's -14.7 %.
+  intensityShape: 4.3,
   // THE PRISM'S LEFTOVERS MUST NOT OUTSHINE ITS SPECTRUM.
   //
   // REFERENCE.md 5.4 sweeps a full circle at R = 140 px around the reference prism and
@@ -252,8 +293,8 @@ const DEFAULTS = {
   // whenever the byproducts are already subordinate, so a clean orientation is untouched.
   //
   // Calibrated by capture, not by eye: see the round-4 numbers in the report.
-  byproductBudget: 0.35,
-  byproductDesat: 0.45,
+  byproductBudget: 0.22,
+  byproductDesat: 0.70,
 };
 
 // Board units for a distance the reference measured in pixels.
@@ -376,6 +417,7 @@ uniform float uHaloGain;
 uniform float uHaloWidth;
 uniform float uHotRadius;
 uniform float uHotGain;
+uniform float uMouthGain;
 
 out vec4 outColor;
 
@@ -411,14 +453,14 @@ float vnoise(vec2 p) {
 // 13 %) and exactly why the beam read as slow smoke rather than as dusty air. The old
 // comment naming those four periods described the LATTICES, not the periods they produce.
 //
-// Differencing the field against itself a fixed distance `delta` downstream turns it into a
+// Differencing the field against itself a fixed distance 'delta' downstream turns it into a
 // band-pass: the transfer is |2 sin(pi f delta)|, identically zero at DC and first maximal
 // at a period of 2 * delta. Multiplying that against the field's own decaying spectrum puts
 // a real peak at a chosen period instead of a shoulder at an unreachable one. Both samples
 // come from the same field, so the octave stays a smooth, correlated pattern -- it is a
 // high-passed cloud, not a second uncorrelated noise.
 //
-// `freq` is in cycles per board unit and `delta` in lattice cells, so an octave whose
+// 'freq' is in cycles per board unit and 'delta' in lattice cells, so an octave whose
 // lattice is L reference px uses freq = REFERENCE_SCALE / L and peaks at 2 * delta * L
 // reference px.
 float grainBand(float ax, float lat, float freq, float delta, float phase) {
@@ -483,9 +525,26 @@ float coreProfile(float v) {
 // half-max radius, so no exponent in this range can let individual rails show through --
 // at 3.20 with the round-3 half-width the spacing is 0.13 of the half-max radius at
 // R = 140 reference px and still only 0.26 at R = 400, so the wedge stays continuous.
+//
+// ROUND 4 refits it AT CONSTANT 10 % RADIUS. Two independent things were being set by one
+// pair of numbers, and they pull opposite ways: the HALF-MAX radius decides how much
+// neighbouring wavelengths overlap, i.e. how far out the wedge stays neutral (5.2), and the
+// 10 % radius decides the wedge's visible width (5.1). Round 3 needed the second one small
+// and paid for it with the first: 2.05 / 3.20 put the half-max at 11.9 reference px, which
+// is well inside the 15 px half-width of the white beam that made the fan. A fan body
+// narrower than its own source beam cannot smear the spectrum the way a real one does, and
+// it showed -- measured on the scripted dispersion board, mean saturation across the fan
+// band read 0.171 / 0.223 / 0.276 / 0.329 / 0.362 at R = 45 / 60 / 80 / 100 / 120 against
+// ref_030's own 0.146 / 0.140 / 0.235 / 0.256 / 0.325.
+//
+// 1.81 / 5.00 solves the pair instead of trading them: half-max 14.0 reference px, within a
+// pixel of the beam's own 15, and the 10 % radius 17.8 against 17.2 before -- so the visible
+// wedge is unchanged while the overlap near the prism goes up by a fifth. The exponent stops
+// at 5; the profile a perfectly matched pair would need is nearly a rectangle, and a
+// rectangle draws a hard outer edge on the wedge, which is the tell we are removing.
 float spectralProfile(float v) {
   float a = abs(v);
-  float p = exp(-pow(max(a * 2.05, 1e-4), 3.20));
+  float p = exp(-pow(max(a * 1.81, 1e-4), 5.00));
   return p * (1.0 - smoothstep(PROFILE_EXTENT - 0.45, PROFILE_EXTENT, a));
 }
 
@@ -606,6 +665,31 @@ void main() {
   // is cut with everything else.
   energy *= 1.0 - vAperture * clamp(-vAlong / 3.0, 0.0, 1.0);
 
+  // The mouth glow: REFERENCE.md 4.4's "soft roughly circular glow of radius ~22 px"
+  // surrounding the emitter mouth.
+  //
+  // It has to be ADDITIVE and it has to sit AFTER the aperture cut, and both of those follow
+  // from one measurement. The flare above is a MULTIPLIER on beam energy, and behind the
+  // aperture plane there is no beam energy to multiply -- so no value of hotRadius can put
+  // any light there. Measured on half-circle arcs behind the mouth, widening hotRadius from
+  // 22 u to 39 u moved 22 reference px from 0.008 to 0.010 against the reference's 0.197:
+  // the right diagnosis of the radius, and the wrong term to carry it.
+  //
+  // A real aperture scatters into the air on every side of itself, so the glow is a plain
+  // radial lobe about the mouth point, gated to the emitter's own first segment (vAperture)
+  // so a mirror bounce cannot grow one -- 4.4 is explicit that a mirror shows no flare.
+  //
+  // The lobe is a CUBIC exponential, not the gaussian the multiplicative flare uses. A
+  // gaussian of the same radius holds 0.32 at 22 reference px and still 0.17 at 30, a ratio
+  // of 1.9 where the reference's own arcs fall 0.197 to 0.056, a ratio of 3.5. The reference
+  // glow has a fuller middle and a much harder end than a gaussian does, and reaching that
+  // by shrinking the radius instead would pull the middle in with it.
+  float mouthGlow = vAperture * vHot.x;
+  if (mouthGlow > 0.0) {
+    float dm = dA / max(uHotRadius, 1e-3);
+    energy += vColor * (mouthGlow * uMouthGain * uWhiteGain * exp(-dm * dm * dm));
+  }
+
   // White light does not attenuate with distance (REFERENCE.md 4.4). Per-bounce loss is
   // the tracer's business and already sits in vIntensity.
 
@@ -687,6 +771,7 @@ export function createBeamRenderer(gl) {
     haloExtent: gl.getUniformLocation(program, 'uHaloExtent'),
     hotRadius: gl.getUniformLocation(program, 'uHotRadius'),
     hotGain: gl.getUniformLocation(program, 'uHotGain'),
+    mouthGain: gl.getUniformLocation(program, 'uMouthGain'),
   };
 
   const params = Object.assign({}, DEFAULTS);
@@ -896,6 +981,7 @@ export function createBeamRenderer(gl) {
     g.uniform1f(uni.haloExtent, params.haloExtent);
     g.uniform1f(uni.hotRadius, params.hotRadius);
     g.uniform1f(uni.hotGain, params.hotGain);
+    g.uniform1f(uni.mouthGain, params.mouthGain);
 
     g.disable(g.DEPTH_TEST);
     g.disable(g.CULL_FACE);

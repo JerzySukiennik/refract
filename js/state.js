@@ -7,11 +7,18 @@ import { norm } from './optics/geometry.js';
 const STORAGE_KEY = 'refract.progress.v1';
 const STORAGE_VERSION = 1;
 
+// The drag path retraces at 60 Hz. Borrowing segments from the tracer's pool cuts this
+// from ~263 KB to ~17 KB per trace and drops GC events by about two thirds. Safe here
+// because every consumer (main.js beams.upload, board.js light gathering) re-reads
+// state.trace.segments each frame and never holds a previous trace to compare against.
+// The lane name must stay distinct from solver.js's 'solver-verdict', or a hint search
+// would scribble over the beams being drawn.
 const TRACE_OPTS = {
   spectralSamples: 48,
   maxBounces: 64,
   maxSegments: 4000,
   receptorThreshold: 0.06,
+  borrowSegments: 'render',
 };
 
 const EMPTY_TRACE = { segments: [], receptors: [], solved: false, stats: {} };
