@@ -39,27 +39,39 @@
 
 <canvas id="board" aria-label="Light puzzle board"></canvas>
 
+<!-- The modal dim lives BELOW the chrome (z 5, canvas is z 1, #hud is z 10) so its blur
+     only ever reaches the board. A backdrop-filter on the overlay itself sat above #hud and
+     smeared the level title and the whole chip row along with the board; ref_034 keeps them
+     razor sharp behind its panel. -->
+<div id="dim-layer" aria-hidden="true"></div>
+
 <div id="hud" aria-live="off">
 
   <div class="hud-top">
     <header class="title-block">
       <p class="level-tag" id="level-tag"></p>
-      <h1 class="level-name" id="level-name"></h1>
+      <h1 class="level-name"><span class="gw" id="level-name"></span></h1>
     </header>
 
     <nav class="chip-row" id="chip-row" aria-label="Game controls">
-      <button type="button" class="chip" data-action="reset">RESET</button>
-      <button type="button" class="chip" data-action="hint" aria-pressed="false">HINT</button>
-      <button type="button" class="chip" data-action="levels">LEVELS</button>
-      <button type="button" class="chip chip-sound" data-action="sound" aria-pressed="true">SOUND</button>
-      <button type="button" class="chip" data-action="room">ROOM</button>
+      <button type="button" class="chip" data-action="reset"><span class="gw">RESET</span></button>
+      <button type="button" class="chip" data-action="hint" aria-pressed="false"><span class="gw">HINT</span></button>
+      <button type="button" class="chip" data-action="levels"><span class="gw">LEVELS</span></button>
+      <button type="button" class="chip chip-sound" data-action="sound" aria-pressed="true"><span class="gw">SOUND</span></button>
+      <button type="button" class="chip" data-action="room"><span class="gw">ROOM</span></button>
     </nav>
   </div>
 
-  <p class="hint-line" id="hint-line" aria-live="polite"></p>
+  <!-- One strip under the board carries the hint AND the used/par readout, and shows
+       exactly one of them at a time, the way the reference does. The readout used to sit
+       alone in the bottom-left viewport corner, hundreds of pixels from the dock it
+       describes. -->
+  <div class="board-strip" id="board-strip">
+    <p class="hint-line" id="hint-line" aria-live="polite"></p>
+    <p class="readout" id="readout"><span class="readout-used"></span><span class="readout-sep">·</span><span class="readout-par"></span></p>
+  </div>
 
   <footer class="dock-zone">
-    <p class="readout" id="readout"><span class="readout-used"></span><span class="readout-sep">·</span><span class="readout-par"></span></p>
     <div class="dock" id="dock" role="group" aria-label="Inventory"></div>
   </footer>
 

@@ -154,6 +154,15 @@ export function abbeNumber(glass) {
 export const PRISM_DEFAULTS = {
   glass: 'SF11',
   baseIOR: 1.52,
+  // The index spread sets the fan's ANGULAR width, and REFERENCE.md 5.1 wants that wedge
+  // narrower than this: 18 degrees between its 10 % points, about 28 including the wings,
+  // against the 41 this spread rendered. It cannot come down from here. Two contracts hold
+  // it: tools/test-optics.mjs asserts the traced fan stays between 24 and 34 degrees, and
+  // -- the binding one -- every level's embedded solution is authored against the exact
+  // wavelength that lands on each receptor. Trying 0.28 (26.5 traced degrees, still inside
+  // the assertion) moved enough of the fan off its targets that five levels' solutions
+  // stopped solving, with lit fractions falling to 0.054-0.100. Narrowing the wedge is a
+  // job for the renderer's splat, not for the index curve; see beams.js spectralHalfWidth.
   spread: 0.30,
   // Real dispersion squeezes the whole orange-red half of the fan into under a degree,
   // which leaves a warm receptor no target to aim at. Blending the Sellmeier curve toward
@@ -254,42 +263,78 @@ export function sampleWavelengths(count) {
 // the beam width no longer covers the whole angular spread do hues separate.
 //
 // Because CIE XYZ is linear in spectral power, that integral is exactly what additive
-// blending of per-wavelength linear-RGB splats computes for free -- PROVIDED the summed
-// palette is neutral. It is not: `nmToLinearRGB` compresses each wavelength's brightness
-// with BRIGHT_GAMMA so the deep violet and deep red stay visible, and that compression is
-// non-linear, so an equal-energy sum over the whole locus comes out (0.234, 0.443, 0.284)
-// -- a heavy green cast. Summing 48 such samples produced the vivid green slab that the
-// reference does not contain. RENDER_GAIN is the one von Kries balance that makes the
-// full-spectrum sum land on exactly (1, 1, 1): full overlap is then neutral by
-// construction, at any sample count, and green -- which always has neighbours on both
-// sides -- can never run away.
+// blending of per-wavelength linear-RGB splats computes for free -- but ONLY if every step
+// from wavelength to framebuffer is itself linear in power. `nmToLinearRGB` is not, twice
+// over: BRIGHT_GAMMA raises each wavelength's brightness to the 0.45 so a legend swatch of
+// deep violet stays visible, and the out-of-gamut fix subtracts the smallest channel,
+// which is a different amount of white at every wavelength. Neither commutes with
+// summation, so a pixel that receives a band of wavelengths did NOT show the colour of
+// that band -- it showed a hand-authored ramp added to itself. Measured on that palette,
+// 424 nm came out at luminance 12.7 against 0.20 at 500 nm, no green survived being
+// averaged with its neighbours, and the fan rendered as an orange bar, a black gap and a
+// blue bar with hue 265-339 where green belongs.
+//
+// So the render path leaves nmToLinearRGB alone (receptor flags and legend swatches still
+// want a violet you can see) and builds its own palette out of three strictly linear
+// factors:
+//
+//   1. XYZ_TO_RGB * (X, Y, Z)      -- the CIE integrand itself, nothing else.
+//   2. + RENDER_WHITE * Y          -- desaturation toward the wavelength's own luminance.
+//      Linear in power because Y is, so it survives summation, unlike a per-wavelength
+//      min-subtraction. Being proportional to Y it desaturates the greens and yellows
+//      hardest and the violet and red wings barely at all, which is exactly the shape
+//      REFERENCE.md 5.1 measures: saturation 1.00 at the violet edge, 0.90 at the red
+//      edge, and 0.22-0.31 through the green middle.
+//   3. * m^(-RENDER_WING_POWER), where m is that wavelength's own largest channel -- the
+//      emitter's SPD, expressed per unit of perceptual arc, which is the axis the fan is
+//      spread along. Weighting on m rather than on Y matters: HSV value, which is what
+//      every measurement of the reference fan reports, is the LARGEST channel, not the
+//      luminance. Tapering Y left cyan (where no single channel is large) sitting in a
+//      45 % value trough between the blue and red humps; tapering m flattens the quantity
+//      actually being measured, and the deepest interior minimum on a captured arc fell
+//      from 57 % of peak to 2-4 %. At 0.56 the 385 nm and 697 nm ends of the palette sit
+//      at 0.066 and 0.115 of its peak, against REFERENCE.md 5.1's measured 0.02 and 0.07
+//      out of 0.44.
+//
+// A residual clamp at zero is still needed for the far violet, where sRGB has no red
+// primary to give; it bites only on samples already below 2 % of peak value.
 const RENDER_INTEGRAL_SAMPLES = 512;
+const RENDER_WHITE = 2.0;
+const RENDER_WING_POWER = 0.56;
 
-// The second half of the same problem is the fan's ENDS. `nmToLinearRGB` lifts 380 nm and
-// 700 nm to full visibility on purpose, because a receptor flag or a legend swatch has to
-// show a violet you can actually see. A dispersion fan must not: the eye's response at the
-// wings is four orders of magnitude below its peak, which is why REFERENCE.md 5.1 measures
-// value 0.02 at the violet edge and 0.07 at the red edge against 0.44 in the middle. Left
-// at full brightness the wings put a saturated amber rail and a saturated violet rail down
-// both sides of the wedge at every radius, and no amount of overlap in the middle hides
-// them. Weighting the render palette by a compressed photopic curve restores the taper
-// without touching the colours the rest of the game reads.
-const RENDER_WING_TAPER = 0.35;
-
-function renderWingWeight(nm) {
-  return Math.pow(Math.max(cieY(nm), 1e-7), RENDER_WING_TAPER);
+function renderRawInto(out, nm) {
+  const X = cieX(nm);
+  const Y = cieY(nm);
+  const Z = cieZ(nm);
+  const white = RENDER_WHITE * Y;
+  let r = XYZ_TO_RGB[0] * X + XYZ_TO_RGB[1] * Y + XYZ_TO_RGB[2] * Z + white;
+  let g = XYZ_TO_RGB[3] * X + XYZ_TO_RGB[4] * Y + XYZ_TO_RGB[5] * Z + white;
+  let b = XYZ_TO_RGB[6] * X + XYZ_TO_RGB[7] * Y + XYZ_TO_RGB[8] * Z + white;
+  if (r < 0) r = 0;
+  if (g < 0) g = 0;
+  if (b < 0) b = 0;
+  const m = Math.max(r, g, b, 1e-9);
+  const w = Math.pow(m, -RENDER_WING_POWER);
+  out[0] = r * w;
+  out[1] = g * w;
+  out[2] = b * w;
+  return out;
 }
 
+// One von Kries balance, so that a pixel reached by the WHOLE spectrum comes out exactly
+// neutral at any sample count. Because every factor above is linear, this is the only
+// correction needed, and a 512-sample sweep of the finished palette means exactly
+// (1.000, 1.000, 1.000) -- which is what makes the wedge leave the prism grey without any
+// hand-authored grey being drawn.
 const RENDER_GAIN = (() => {
   const s = sampleWavelengths(RENDER_INTEGRAL_SAMPLES);
   const acc = new Float64Array(3);
   const tmp = new Float64Array(3);
   for (let i = 0; i < s.length; i++) {
-    nmToLinearRGBInto(tmp, s[i]);
-    const w = renderWingWeight(s[i]);
-    acc[0] += tmp[0] * w;
-    acc[1] += tmp[1] * w;
-    acc[2] += tmp[2] * w;
+    renderRawInto(tmp, s[i]);
+    acc[0] += tmp[0];
+    acc[1] += tmp[1];
+    acc[2] += tmp[2];
   }
   const n = s.length;
   return [n / Math.max(acc[0], 1e-6), n / Math.max(acc[1], 1e-6), n / Math.max(acc[2], 1e-6)];
@@ -298,11 +343,12 @@ const RENDER_GAIN = (() => {
 // Linear sRGB for one wavelength, scaled so that the mean over a full perceptually
 // uniform sweep of the visible band is exactly (1, 1, 1).
 export function nmToRenderRGBInto(out, nm) {
-  nmToLinearRGBInto(out, nm);
-  const w = renderWingWeight(nm);
-  out[0] *= RENDER_GAIN[0] * w;
-  out[1] *= RENDER_GAIN[1] * w;
-  out[2] *= RENDER_GAIN[2] * w;
+  if (nm < NM_MIN) nm = NM_MIN;
+  else if (nm > NM_MAX) nm = NM_MAX;
+  renderRawInto(out, nm);
+  out[0] *= RENDER_GAIN[0];
+  out[1] *= RENDER_GAIN[1];
+  out[2] *= RENDER_GAIN[2];
   return out;
 }
 

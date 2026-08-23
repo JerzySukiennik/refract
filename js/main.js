@@ -50,6 +50,7 @@ const BURST_STAGGER = 0.09;
 const BURST_LIFE = 0.4;
 const BURST_RADIUS = 180;
 const RECEPTOR_FADE_DELAY = 0.25;
+const BEAM_ENERGY_FULL = 2200;
 
 function pick(mod, ...names) {
   for (const n of names) {
@@ -219,10 +220,17 @@ function boot() {
 
   const audioInit = pick(audio, 'initAudio', 'init', 'createAudio', 'setup');
   const audioPlay = pick(audio, 'play', 'playSound', 'trigger');
-  const audioEnable = pick(audio, 'setEnabled', 'setMuted', 'enable');
   const audioResume = pick(audio, 'resume', 'unlock');
+  const audioSetMuted = pick(audio, 'setMuted');
+  const audioSolve = pick(audio, 'solve');
+  const audioChime = pick(audio, 'receptorChime');
+  const audioEnergy = pick(audio, 'setBeamEnergy');
+  // state.sound is "sound is ON"; the audio module takes "is MUTED". Passing the flag
+  // straight through inverted it and silenced the whole engine until the state sync
+  // happened to correct it a tick later.
+  const audioEnable = (on_) => call(audioSetMuted, on_ === false);
   call(audioInit);
-  call(audioEnable, state.sound);
+  audioEnable(state.sound);
 
   call(pick(hud, 'initHud', 'init', 'createHud', 'mount'));
   call(pick(modals, 'initModals', 'init', 'createModals', 'mount'));
@@ -242,27 +250,81 @@ function boot() {
     if (room && state.mode === 'multi') room.broadcast(op);
   }
 
+  let lastLit = new Set();
+
+  // The hum module was written to swell with the beam but nothing ever fed it, so it sat
+  // pinned at its 0.0001 floor. Energy is the intensity-weighted path length: a lone
+  // emitter stub measures ~200 board units, a fully dispersed solved fan ~2550, so
+  // BEAM_ENERGY_FULL saturates on a rich board without clipping ordinary ones to silence.
+  function driveHum(trace) {
+    const segs = (trace && trace.segments) || [];
+    let weighted = 0;
+    for (const s of segs) {
+      const len = Math.hypot(s.bx - s.ax, s.by - s.ay);
+      weighted += len * (s.intensity === undefined ? 1 : s.intensity);
+    }
+    const recs = (trace && trace.receptors) || [];
+    let lit = 0;
+    for (const r of recs) if (r.satisfied) lit += 1;
+    call(audioEnergy, Math.min(1, weighted / BEAM_ENERGY_FULL), lit);
+  }
+
+  // A receptor lighting on its own earns its own bell; a receptor lighting as the last
+  // piece of a solve does not, because the solve chord covers it.
+  function chimeNewReceptors(trace) {
+    const recs = (trace && trace.receptors) || [];
+    const now_ = new Set();
+    let index = 0;
+    for (const r of recs) {
+      if (r.satisfied) {
+        now_.add(r.id);
+        if (!lastLit.has(r.id) && !(trace && trace.solved)) {
+          const def = ((state.level && state.level.receptors) || []).find((d) => d.color === r.color);
+          call(audioChime, index, { panX: def ? def.x : 500 });
+        }
+      }
+      index += 1;
+    }
+    lastLit = now_;
+  }
+
   on('optic:add', (o) => {
     opticEntry(o.id);
-    call(audioPlay, 'place');
+    // Glass and metal do not land the same way: a prism gets the glass samples.
+    call(audioPlay, o.type === 'prism' ? 'place_prism' : 'place', { panX: o.x });
     broadcast({ type: 'add', optic: { ...o } });
   });
   on('optic:remove', (o) => {
-    call(audioPlay, 'pick');
+    call(audioPlay, 'remove', { panX: o.x });
     broadcast({ type: 'remove', id: o.id });
   });
   on('optic:move', (o) => broadcast({ type: 'update', optic: { ...o } }));
   on('optic:rotate', (o) => broadcast({ type: 'update', optic: { ...o } }));
+  on('drag:start', (d) => {
+    if (d && d.kind === 'move') call(audioPlay, 'pick', { panX: d.x });
+  });
   on('select', (id) => {
-    if (id) call(audioPlay, 'ui_click');
+    if (id) call(audioPlay, 'ui_select');
   });
   on('invalid', () => call(audioPlay, 'error'));
+  on('undo', () => call(audioPlay, 'undo'));
+  on('redo', () => call(audioPlay, 'undo', { rate: 1.09 }));
+  on('reset', () => {
+    lastLit = new Set();
+    call(audioPlay, 'reset');
+  });
   on('sound', (v) => {
     call(audioEnable, v);
     call(audioPlay, 'ui_switch');
   });
+  on('trace', (t) => {
+    driveHum(t);
+    chimeNewReceptors(t);
+  });
   on('level', () => {
-    call(audioPlay, 'beam_on');
+    lastLit = new Set();
+    call(audioPlay, 'level_start');
+    call(audioPlay, 'beam_on', { delay: 0.14 });
     opticAnim.clear();
     receptorAnim.clear();
     bursts = [];
@@ -271,7 +333,9 @@ function boot() {
     for (const s of Array.from(springs)) dropSpring(s);
   });
   on('solved', () => {
-    call(audioPlay, 'receptor');
+    // The full six-note chord, its sparkle tail and the swell sample — not the single
+    // short receptor blip the payoff used to get.
+    call(audioSolve);
     spawnBurst();
     // The capture harness composes solved boards deliberately and needs to photograph the
     // lit board itself; it asks for the panel explicitly via REFRACT.showModal('solved').

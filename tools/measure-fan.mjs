@@ -48,6 +48,7 @@ const flag = (name, dflt) => {
 };
 const prefix = flag('prefix', 'measure');
 const rotate = flag('angle', '');
+const free = flag('free', '');
 const outDir = path.join(ROOT, 'progress/shots');
 const W = 720;
 const H = 694;
@@ -92,12 +93,26 @@ await page.goto(`http://localhost:${PORT}/?capture=1`, { waitUntil: 'networkidle
 await page.waitForFunction('!!(window.REFRACT && window.REFRACT.ready)', { timeout: 25000 });
 await page.evaluate(() => window.REFRACT.ready);
 
-const probe = await page.evaluate(async (rotDeg) => {
+const probe = await page.evaluate(async (rotDeg, freeAngle) => {
   const R = window.REFRACT;
   R.clearOptics();
   R.showModal(null);
   R.setDrag(false);
   R.select(null);
+  if (freeAngle !== '') {
+    // FAR-FIELD RIG. The scripted dispersion scene aims its fan straight into three lit
+    // receptors, and a lit receptor's bloom disc is far brighter than the fan: every arc
+    // sample past R ~ 120 reference px reads the disc, not the wedge, which is why an arc
+    // scan of that scene reports value 1.000 and hue 200 all the way round. Level 4 has a
+    // long horizontal emitter run and all three receptors down in the bottom-right corner,
+    // so a prism dropped on the run with the fan thrown up-right leaves them dark and the
+    // wedge crosses several hundred pixels of black board.
+    R.setLevel(4);
+    await R.frames(2);
+    R.clearOptics();
+    R.place({ type: 'prism', x: 420, y: 200, angle: Number(freeAngle) * Math.PI / 180 });
+    await R.settle();
+  } else {
   await R.script('dispersion');
   if (rotDeg !== '') {
     // Re-place the whole solution rather than swapping one optic: removeOptic leaves the
@@ -109,6 +124,7 @@ const probe = await page.evaluate(async (rotDeg) => {
     }
   }
   await R.settle();
+  }
 
   const gl = await import('/js/render/gl.js');
   const t = gl.getTransform();
@@ -153,7 +169,7 @@ const probe = await page.evaluate(async (rotDeg) => {
     bearings,
     fps: Math.round(R.fps || 0),
   };
-}, rotate);
+}, rotate, free);
 
 await new Promise(r => setTimeout(r, 400));
 const png = path.join(outDir, `${prefix}-fan.png`);

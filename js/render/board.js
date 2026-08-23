@@ -31,8 +31,12 @@ const RECEPTOR_STROKE = 7.9;
 const RECEPTOR_HALO = RECEPTOR_R + 132;
 const POLE_H = 77.5;
 const POLE_W = 5.3;
-const FLAG_W = 49.3;
-const FLAG_H = 29.0;
+// Measured off ref_001.jpg by thresholding the blue pennant (rows 534-549, x 458-490): the
+// cloth is about 32 x 15 css px. The size was never the real defect — the SHAPE was. The
+// reference pennant is deep at the hoist and tapers to a near point at the fly; ours was a
+// constant-thickness ribbon that only narrowed to 54 %, which reads as a poster chip.
+const FLAG_W = 57.0;
+const FLAG_H = 27.0;
 
 // REFERENCE.md 4.4: a machined grey housing box with a slit at its mouth that is brighter
 // than the beam it feeds. The reference's block is 30 u long, but our beam's start cap is
@@ -85,11 +89,11 @@ function scene(hex, gain) {
 // spread of about 32 levels between neighbouring bricks, and its mortar sits only ~10
 // levels off the face. Ours used to render at (146, 106, 98) with mortar 48 levels hot,
 // which is what made the wall read as one flat salmon fill with a pale grid pasted on.
-const BRICK_LIGHT = scene('#7B5A53');
-const BRICK_MID = scene('#6F4843');
-const BRICK_DARK = scene('#5E3831');
-const BRICK_RIM = scene('#6E504D');
-const MORTAR = scene('#96736C');
+const BRICK_LIGHT = scene('#87635B');
+const BRICK_MID = scene('#7A4F49');
+const BRICK_DARK = scene('#673D36');
+const BRICK_RIM = scene('#785854');
+const MORTAR = scene('#A47E76');
 
 const HOUSING = scene('#5C5A64');
 const HOUSING_EDGE = scene('#B6B4BE');
@@ -97,7 +101,7 @@ const SLIT = scene('#E0DEE1', 3.0);
 
 const MIRROR_BODY = scene('#8F9AA6', 0.85);
 const MIRROR_BACK = scene('#2A2E36');
-const MIRROR_SPEC = scene('#FFFFFF', 0.42);
+const MIRROR_SPEC = scene('#FFFFFF', 0.17);
 const MIRROR_GLOW = scene('#C4CEDA', 0.30);
 const GLASS_EDGE = scene('#B9C4CE', 1.15);
 
@@ -110,22 +114,30 @@ const READOUT = scene('#9A9298');
 // measures 248 — while its bloom contribution drops by roughly six times.
 const HANDLE_FILL = new Float32Array([0.95, 0.93, 0.90]);
 
-// Rejected placement. The ghost keeps its real silhouette and turns red *as an object*; a
-// neutral-grey ghost with a red dot at its centre reads as an indicator lamp, not a refusal.
-const REJECT_BODY = scene('#6E2A2C');
-const REJECT_BACK = scene('#2A1113');
-const REJECT_SPEC = scene('#FF7A72', 0.30);
-const REJECT_GLOW = scene('#E85A52', 0.12);
-const REJECT_EDGE = scene('#EE7A72', 0.80);
+// Rejected placement. The ghost keeps its real silhouette, but the body stays a dark,
+// desaturated slate and only its contour and aura go red: a saturated red *body* sits in
+// the same colour family as the red receptor's #F96060, so a refusal could be read as a
+// coloured optic. A dead grey rod with a red outline cannot be read as anything but "no".
+const REJECT_BODY = scene('#4A3E40');
+const REJECT_BACK = scene('#181113');
+const REJECT_SPEC = scene('#FFB0A8', 0.05);
+const REJECT_GLOW = scene('#E85A52', 0.16);
+const REJECT_EDGE = scene('#E8665E', 0.55);
 
+// Flags are cloth hanging beside a lamp, not a second lamp. Measured on ref_001.jpg, rows
+// 540-546: the reference pennants render at sRGB (21,57,120) blue, (73,126,73) green and
+// (102,59,22) orange — luminance 53, 104, 68 — against ours at 111 (cyan) and 130 (green),
+// so our cloth competed with its own ring. The shader's fold and rim terms multiply the
+// authored colour up by about 1.25x, so each unlit entry is authored at the measured
+// reference colour divided by 1.25, and the old unlit colour becomes the LIT one.
 const RECEPTORS = {
-  blue: { ring: [scene('#26549C'), scene('#43AAF9', 1.15)], flag: [scene('#2E5CAE'), scene('#4696E7', 1.1)] },
-  green: { ring: [scene('#6EAF74'), scene('#B1F5B5', 1.15)], flag: [scene('#74B278'), scene('#AAF0B2', 1.1)] },
-  orange: { ring: [scene('#9C682C'), scene('#EDB950', 1.15)], flag: [scene('#A8683A'), scene('#DEAC4C', 1.1)] },
-  red: { ring: [scene('#9C3030'), scene('#F96060', 1.15)], flag: [scene('#B23636'), scene('#E76060', 1.1)] },
-  yellow: { ring: [scene('#9C9330'), scene('#F5E85C', 1.15)], flag: [scene('#B2A83A'), scene('#E7DC5C', 1.1)] },
-  cyan: { ring: [scene('#2A9098'), scene('#5CE8F5', 1.15)], flag: [scene('#2FA0AB'), scene('#5CD8E7', 1.1)] },
-  violet: { ring: [scene('#6A3A9C'), scene('#B47CF9', 1.15)], flag: [scene('#7448B0'), scene('#A47CE7', 1.1)] },
+  blue: { ring: [scene('#26549C'), scene('#43AAF9', 1.15)], flag: [scene('#112E60'), scene('#2E5CAE')] },
+  green: { ring: [scene('#6EAF74'), scene('#B1F5B5', 1.15)], flag: [scene('#3A653A'), scene('#5C9A60')] },
+  orange: { ring: [scene('#9C682C'), scene('#EDB950', 1.15)], flag: [scene('#522F12'), scene('#A8683A')] },
+  red: { ring: [scene('#9C3030'), scene('#F96060', 1.15)], flag: [scene('#602020'), scene('#B23636')] },
+  yellow: { ring: [scene('#9C9330'), scene('#F5E85C', 1.15)], flag: [scene('#605A20'), scene('#9E9438')] },
+  cyan: { ring: [scene('#2A9098'), scene('#5CE8F5', 1.15)], flag: [scene('#20585E'), scene('#2FA0AB')] },
+  violet: { ring: [scene('#6A3A9C'), scene('#B47CF9', 1.15)], flag: [scene('#442464'), scene('#7448B0')] },
 };
 const POLE = [scene('#7A8FAD'), scene('#AFC5F6', 1.05)];
 
@@ -244,10 +256,13 @@ void main() {
   float thick = mix(uSize.x, uSize.y, uHoriz);
   float t = clamp(mix(dist.x, dist.z, uHoriz) / max(thick, 1e-3), 0.0, 1.0);
 
-  // The bond lives in BOARD space, not in each rectangle's own frame, so an interior stub
-  // shares its coursing with the frame it butts into instead of restarting mid-brick.
-  float u = mix(vBoard.y, vBoard.x, uHoriz);
-  float v = mix(vBoard.x, vBoard.y, uHoriz);
+  // The bond lives in BOARD space and in ONE orientation for the whole board. Swapping the
+  // axes per wall (which is what uHoriz used to do here) rotated the running bond 90 degrees
+  // on every wall taller than it is wide, so the bond broke at all four corners of the frame
+  // and on half the interior walls. A real wall is laid once; only the *thickness* shading
+  // above and the face normal below are allowed to know which way this rectangle runs.
+  float u = vBoard.x;
+  float v = vBoard.y;
 
   float course = floor(v / ${COURSE_H.toFixed(2)});
   float rowOff = mod(course, 2.0) * ${(BRICK_LEN * 0.5).toFixed(3)};
@@ -259,21 +274,21 @@ void main() {
   // The slab is a rounded extrusion: brightest close to either face, dimmest in the belly.
   // Measured on ref_001.jpg, rows 58-72 of the top band: 133 at the faces, 118 mid-slab.
   float belly = 1.0 - abs(t - 0.5) * 2.0;
-  vec3 col = mix(uLight, uMid, smoothstep(0.05, 0.62, belly));
-  col = mix(col, uDark, smoothstep(0.5, 1.0, belly) * 0.45);
-  col = mix(col, uRim, smoothstep(0.20, 0.0, belly) * 0.40);
+  vec3 col = mix(uLight, uMid, smoothstep(0.05, 0.62, belly) * 0.75);
+  col = mix(col, uDark, smoothstep(0.5, 1.0, belly) * 0.22);
+  col = mix(col, uRim, smoothstep(0.20, 0.0, belly) * 0.25);
 
-  // Per-brick tone. The reference's neighbouring bricks differ by 10-20 levels, so this is
-  // a wide walk, not the +/-6 % nudge we had.
+  // Per-brick tone. Measured on ref_001.jpg the reference's top band runs std/mean 0.089
+  // across the whole band; a +/-13 % walk here alone overshot that, so the walk is halved.
   float r1 = hash21(vec2(bIdx, course) + 0.13);
   float r2 = hash21(vec2(bIdx, course) * 1.71 + 5.37);
-  col *= 0.86 + 0.27 * r1;
-  col.r *= 1.0 + (r2 - 0.5) * 0.11;
-  col.b *= 1.0 - (r2 - 0.5) * 0.13;
+  col *= 0.9095 + 0.170 * r1;
+  col.r *= 1.0 + (r2 - 0.5) * 0.055;
+  col.b *= 1.0 - (r2 - 0.5) * 0.065;
 
   float grit = vnoise(vec2(u, v) * 1.35 + vec2(bIdx * 7.0, course * 11.0));
   float fine = vnoise(vec2(u, v) * 6.1 + vec2(19.7, 3.3));
-  col *= 0.92 + 0.10 * grit + 0.055 * fine;
+  col *= 0.946 + 0.062 * grit + 0.030 * fine;
 
   // The detail tile is 4 bricks by 12 courses; sampling it at four courses used to stretch
   // it 3x and scramble the per-brick tone it carries.
@@ -287,9 +302,9 @@ void main() {
   float jy = min(fv, ${COURSE_H.toFixed(2)} - fv);
   float je = min(jx, jy * 1.08);
   float joint = 1.0 - smoothstep(0.0, ${JOINT_W.toFixed(2)}, je);
-  vec3 mortar = mix(uMortar, col * 1.10, 0.22);
-  col = mix(col, mortar, joint * 0.80);
-  col *= 1.0 - 0.10 * (1.0 - smoothstep(0.0, ${(JOINT_W * 0.40).toFixed(2)}, je));
+  vec3 mortar = mix(uMortar, col * 1.05, 0.44);
+  col = mix(col, mortar, joint * 0.70);
+  col *= 1.0 - 0.06 * (1.0 - smoothstep(0.0, ${(JOINT_W * 0.40).toFixed(2)}, je));
 
   vec3 albedo = col;
 
@@ -448,9 +463,12 @@ void main() {
   // A pennant, not a triangle: one travelling wave down a tapering cloth. Built around a
   // wavy centre line so the whole flag moves instead of only its lower edge — at the 28 css
   // px this renders at, a wave applied to one edge alone collapses into a flat wedge.
-  float wave = sin(x * 4.9 + 0.55);
-  float mid = 0.50 + 0.185 * wave * (0.30 + 0.70 * x);
-  float span = 0.445 * (1.0 - 0.52 * x * x);
+  float wave = sin(x * 5.6 + 0.50);
+  // A golf-pin pennant: full depth at the hoist, a near point at the fly, and the whole
+  // cloth drifting down and waving as it goes — measured off ref_001.jpg, where the tip
+  // sits about a third of the flag's depth below the hoist's centre line.
+  float mid = 0.50 + 0.115 * x + 0.105 * wave * (0.25 + 0.75 * x);
+  float span = 0.470 * (1.0 - 0.88 * x * x);
   float top = mid - span;
   float bot = mid + span;
 
@@ -459,13 +477,14 @@ void main() {
   float a = inside * clamp(edge / max(uPx, 1e-3) + 0.5, 0.0, 1.0);
 
   // Fold shading follows the same wave, so the cloth reads as curved cloth.
-  float fold = 0.80 + 0.30 * cos(x * 4.9 + 0.55) + 0.16 * smoothstep(1.0, 0.0, x);
-  vec3 col = uColor * fold * (1.0 + 0.85 * uLit);
-  float rim = smoothstep(2.4, 0.0, edge) * inside;
-  col += uColor * rim * (0.25 + 0.6 * uLit);
-  // The ring below is a lamp, so the pennant is lit from beneath by its own colour.
+  float fold = 0.84 + 0.26 * cos(x * 7.4 + 0.55) + 0.12 * smoothstep(1.0, 0.0, x);
+  vec3 col = uColor * fold * (1.0 + 0.70 * uLit);
+  float rim = smoothstep(2.0, 0.0, edge) * inside;
+  col += uColor * rim * (0.15 + 0.45 * uLit);
+  // The ring below is a lamp, so the pennant is lit from beneath by its own colour — but
+  // only just: the reference's cloth stays darker than the floor pool it stands in.
   float gd = length(vLocal - uGlowAt);
-  col += uGlow * (0.30 * exp(-gd / 34.0) + 0.22 * exp(-gd / 90.0)) * (1.0 + 0.7 * uLit);
+  col += uGlow * (0.14 * exp(-gd / 34.0) + 0.10 * exp(-gd / 90.0)) * (1.0 + 0.7 * uLit);
   fragColor = vec4(col * a, a);
 }`;
 
@@ -501,16 +520,22 @@ uniform vec3 uGlow;
 uniform vec3 uLitColor;
 uniform float uLitAmount;
 uniform float uAlpha;
+uniform float uGhost;
 void main() {
   vec2 p = vLocal;
   float d = sdSeg(p, vec2(-uHalfLen, 0.0), vec2(uHalfLen, 0.0)) - uRad;
   float body = aa(d);
+  float inset = -d;
 
   float side = clamp(p.y / uRad, -1.0, 1.0);
   vec3 substrate = mix(uBody, uBack, smoothstep(-0.22, 0.34, side));
   substrate *= 0.80 + 0.42 * smoothstep(0.9, -0.5, side);
   float endFade = smoothstep(uHalfLen + uRad, uHalfLen - uRad * 0.4, abs(p.x));
   substrate *= 0.55 + 0.45 * endFade;
+  // A dark contour just inside the outline. ORCHESTRATOR-NOTES.md 9.5: the reference's
+  // mirror is DARKER than the beam it reflects and keeps a readable dark edge; without this
+  // the rod has no silhouette at all once a beam lands on it.
+  substrate *= 1.0 - 0.42 * smoothstep(2.6, 0.0, inset);
 
   float specY = p.y + uRad * 0.42;
   float lineProfile = exp(-pow(specY / (uRad * 0.17), 2.0));
@@ -520,17 +545,32 @@ void main() {
 
   float rim = smoothstep(1.5, 0.0, abs(d)) * step(side, 0.05);
   float front = smoothstep(0.45, -0.55, side);
-  float halo = (exp(-max(d, 0.0) / 2.0) * 0.34 + exp(-max(d, 0.0) / 5.5) * 0.07)
+  float halo = (exp(-max(d, 0.0) / 1.9) * 0.20 + exp(-max(d, 0.0) / 5.0) * 0.035)
              * lengthProfile * (0.45 + 0.75 * front);
 
   vec3 col = substrate;
-  col += uLitColor * uLitAmount * (0.30 + 0.70 * lineProfile) * 0.45;
+  // The rod glows along its coated face, not over its whole footprint. This used to add
+  // 0.45 scene units across the entire sprite, which by itself pushed the rod past the
+  // bloom prefilter threshold (0.72) everywhere and let the 6-step pyramid smear it.
+  col += uLitColor * uLitAmount * (0.055 + 0.135 * lineProfile);
   vec3 add = uSpec * spec * (0.42 + 0.58 * uLitAmount);
   add += uGlow * rim * (0.5 + 0.8 * uLitAmount);
-  add += mix(uGlow, uLitColor * 0.7, clamp(uLitAmount, 0.0, 1.0)) * halo * (0.55 + 1.0 * uLitAmount);
+  add += mix(uGlow, uLitColor * 0.30, clamp(uLitAmount, 0.0, 1.0)) * halo * (0.5 + 0.5 * uLitAmount);
 
   float a = body * uAlpha;
-  fragColor = vec4(col * a + add * uAlpha * window(), a);
+  vec3 total = col * a + add * uAlpha * window();
+
+  // Hard ceiling on the radiance this sprite may emit. Anything above the bloom prefilter
+  // threshold (0.72, main.js POST_PARAMS) is smeared by the 6-step pyramid, so the rod is
+  // allowed past it only along the hairline specular line (about 1.5 css px wide): measured
+  // on an isolated lit rod the peak lands at 224/255 and the body at 180, against 252
+  // (clipped) before. ORCHESTRATOR-NOTES.md 9.5.
+  float lineMask = clamp(lineProfile * lengthProfile * body, 0.0, 1.0);
+  float lim = mix(0.36, 0.80, lineMask) * mix(1.0, 0.34, uGhost) * uAlpha;
+  float peak = max(max(total.r, total.g), total.b);
+  total *= (peak > lim) ? lim / max(peak, 1e-5) : 1.0;
+
+  fragColor = vec4(total, a);
 }`;
 
 const FS_PRISM = `${FS_HEAD}
@@ -539,6 +579,7 @@ uniform vec3 uEdge;
 uniform vec3 uLitColor;
 uniform float uLitAmount;
 uniform float uAlpha;
+uniform float uGhost;
 float sdTri(vec2 p, float R) {
   const float K = 0.8660254;
   float d0 = dot(p, vec2(0.5, -K));
@@ -551,28 +592,37 @@ void main() {
   float inside = aa(d);
   float edge = exp(-pow(abs(d) / 1.4, 2.0));
 
-  // REFERENCE.md 6.2: outline plus an almost transparent fill. The unlit fill used to land
-  // 120/255 over a black floor, i.e. brighter than the reference's *lit* prism (measured
-  // +80 on ref_030), which turned an untouched piece of glass into a filled grey plate. The
-  // unlit terms are cut and the lit multipliers raised to match, so a prism in the beam
-  // still brightens the same way while one sitting in the dark is only its outline.
-  vec3 bodyTint = mix(vec3(0.55, 0.60, 0.68), uLitColor, clamp(uLitAmount * 1.3, 0.0, 1.0));
+  // REFERENCE.md 6.2: a 1.5-2 px near-white outline over an almost transparent fill, whose
+  // interior measures only +8 to +14/255 over the background behind it, and explicitly
+  // "no solid tinted body". Two things used to break that. The fill carried a full-strength
+  // blue tint, and the halo term was a CONSTANT inside the triangle (exp(-max(d,0)/k) is 1
+  // for every interior fragment), so an untouched prism sitting in the dark rendered a flat
+  // grey-blue plate at 55-63/255 over a 1-4/255 floor.
+  float litK = clamp(uLitAmount, 0.0, 1.0);
+  vec3 bodyTint = mix(vec3(0.62, 0.66, 0.72), uLitColor, clamp(uLitAmount * 1.3, 0.0, 1.0));
   float depth = smoothstep(0.0, uR * 0.9, -d);
-  vec3 body = bodyTint * (0.017 + 0.032 * depth) * (1.0 + 8.5 * uLitAmount);
+  vec3 body = bodyTint * (0.009 + 0.020 * depth) * (1.0 + 20.0 * uLitAmount);
 
   vec2 a = vec2(-uR * 0.5, -uR * 0.866);
   vec2 b = vec2(uR * 0.72, 0.0);
   float path = exp(-pow(sdSeg(vLocal, a, b) / 1.6, 2.0)) * inside;
 
-  float halo = exp(-max(d, 0.0) / 3.4) * (0.035 + 0.615 * uLitAmount);
+  // Strictly an OUTER glow now: it fades out across the boundary instead of flooding the
+  // interior with a constant term.
+  float halo = exp(-max(d, 0.0) / 3.4) * smoothstep(-2.0, 0.6, d) * (0.03 + 0.62 * uLitAmount);
 
   vec3 col = body;
   vec3 add = uEdge * edge * (0.70 + 2.35 * uLitAmount);
-  add += mix(uEdge, uLitColor, clamp(uLitAmount, 0.0, 1.0)) * path * (0.13 + 1.27 * uLitAmount);
-  add += mix(uEdge, uLitColor, 0.7) * halo;
+  add += mix(uEdge, uLitColor, 0.85 * litK) * path * (0.10 + 1.30 * uLitAmount);
+  add += mix(uEdge, uLitColor, 0.7 * litK) * halo;
 
   float alpha = inside * uAlpha * 0.55;
-  fragColor = vec4(col * alpha + add * uAlpha * window(), alpha);
+  vec3 total = col * alpha + add * uAlpha * window();
+  // Same ceiling discipline as the mirror: the outline may be near-white, the glass may not.
+  float lim = mix(0.34, 0.90, edge) * (1.0 + 0.9 * clamp(uLitAmount, 0.0, 1.0)) * mix(1.0, 0.34, uGhost);
+  float peak = max(max(total.r, total.g), total.b);
+  total *= (peak > lim) ? lim / max(peak, 1e-5) : 1.0;
+  fragColor = vec4(total, alpha);
 }`;
 
 // No degree ticks. ARCHITECTURE.md section 11 item 4 and REFERENCE.md 10.1 item 13: a plain
@@ -780,11 +830,11 @@ export function createBoardRenderer(gl) {
   const ownedTextures = [];
   let detail = pickTexture(gl, ['createBrickTexture', 'brickTexture', 'createBrick', 'makeBrickTexture', 'brick',
     'createNoiseTexture', 'noiseTexture', 'createNoise', 'noise', 'createGrainTexture', 'grainTexture', 'grain']);
-  let detailMix = detail ? 0.34 : 0.0;
+  let detailMix = detail ? 0.23 : 0.0;
   if (!detail) {
     detail = fallbackTexture(gl);
     ownedTextures.push(detail);
-    detailMix = 0.18;
+    detailMix = 0.10;
   }
 
   const textCanvas = document.createElement('canvas');
@@ -1295,7 +1345,7 @@ export function createBoardRenderer(gl) {
     }
   }
 
-  function drawMirror(x, y, angle, alpha, scaleK, reject) {
+  function drawMirror(x, y, angle, alpha, scaleK, reject, ghost) {
     const lit = reject ? { r: 0, g: 0, b: 0, amount: 0 } : opticIllumination(x, y);
     const u = use(progs.mirror);
     const hl = (MIRROR_LEN / 2) * scaleK;
@@ -1309,11 +1359,12 @@ export function createBoardRenderer(gl) {
     gl.uniform3f(u.uLitColor, lit.r, lit.g, lit.b);
     gl.uniform1f(u.uLitAmount, lit.amount);
     gl.uniform1f(u.uAlpha, alpha);
+    gl.uniform1f(u.uGhost, ghost ? 1 : 0);
     place(u, x, y, hl + 26, rad + 24, -angle);
     drawQuad();
   }
 
-  function drawPrism(x, y, angle, alpha, scaleK, reject) {
+  function drawPrism(x, y, angle, alpha, scaleK, reject, ghost) {
     const lit = reject ? { r: 0, g: 0, b: 0, amount: 0 } : opticIllumination(x, y);
     const u = use(progs.prism);
     const R = PRISM_R * scaleK;
@@ -1322,13 +1373,14 @@ export function createBoardRenderer(gl) {
     gl.uniform3f(u.uLitColor, lit.r, lit.g, lit.b);
     gl.uniform1f(u.uLitAmount, lit.amount);
     gl.uniform1f(u.uAlpha, alpha);
+    gl.uniform1f(u.uGhost, ghost ? 1 : 0);
     place(u, x, y, R + 26, R + 26, -angle);
     drawQuad();
   }
 
-  function drawOptic(o, alpha, scaleK, reject) {
-    if (o.type === 'prism') drawPrism(o.x, o.y, o.angle || 0, alpha, scaleK, reject);
-    else drawMirror(o.x, o.y, o.angle || 0, alpha, scaleK, reject);
+  function drawOptic(o, alpha, scaleK, reject, ghost) {
+    if (o.type === 'prism') drawPrism(o.x, o.y, o.angle || 0, alpha, scaleK, reject, ghost);
+    else drawMirror(o.x, o.y, o.angle || 0, alpha, scaleK, reject, ghost);
   }
 
   function drawProtractor(o, scaleK, grabbed) {
@@ -1404,7 +1456,7 @@ export function createBoardRenderer(gl) {
       // A refusal has to be readable as "not here", so the whole silhouette goes red and the
       // aura is fitted to the optic's own footprint. A 26 u point glow on a 110 u mirror was
       // a red dot on an otherwise normal sprite — it read as a status LED, not a rejection.
-      drawOptic(ghost, bad ? 0.34 : 0.42, 0.94, bad);
+      drawOptic(ghost, bad ? 0.34 : 0.42, 0.94, bad, true);
       const ga = normAngle(ghost.angle || 0);
       const span = ghost.type === 'prism' ? 0 : (MIRROR_LEN / 2) * 0.82;
       const halo = ghost.type === 'prism' ? PRISM_R + 16 : MIRROR_T / 2 + 26;
@@ -1412,8 +1464,12 @@ export function createBoardRenderer(gl) {
       gl.uniform2f(ug.uSpan, Math.cos(ga) * span, -Math.sin(ga) * span);
       gl.uniform1f(ug.uRadius, halo);
       gl.uniform1f(ug.uPower, bad ? 2.1 : 3.2);
-      if (bad) gl.uniform3f(ug.uColor, 0.15, 0.018, 0.016);
-      else gl.uniform3f(ug.uColor, 0.11, 0.13, 0.18);
+      // Dim enough that the wash reads as a refusal over a greyed-out sprite rather than
+      // as a saturated red object in the red receptor's own colour family.
+      if (bad) gl.uniform3f(ug.uColor, 0.085, 0.020, 0.018);
+      // A preview, not a placement: the aura alone used to tonemap to 141/255, which is why
+      // the ghost read as a blurred duplicate of a real optic instead of a proposal.
+      else gl.uniform3f(ug.uColor, 0.075, 0.088, 0.12);
       place(ug, ghost.x, ghost.y, span + halo + 4, span + halo + 4, 0);
       drawQuad();
     }

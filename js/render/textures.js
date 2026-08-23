@@ -117,15 +117,17 @@ export function generateBrickPixels(opts = {}) {
       const dBottom = cfg.courseHeight - fy;
       const edge = Math.min(Math.min(dLeft, dRight), Math.min(dTop, dBottom));
 
-      // Per-brick tone: a narrow walk along the dark..light ramp plus a +/-6%
-      // multiplier, which reproduces the measured within-course spread.
+      // Per-brick tone: a walk along the dark..light ramp plus a small multiplier.
+      // ref_001.jpg's top band runs std/mean 0.089 over the whole band; the old 0.86-wide
+      // ramp plus a +/-8.5% multiplier, modulated on top of the shader's own walk, put us
+      // at 0.135. Both walks are roughly halved so the two together land on the reference.
       const j = hash2(colKey, courseKey, 7331);
       const j2 = hash2(colKey, courseKey, 90211);
-      const ramp = 0.5 + (j - 0.5) * 0.86;
+      const ramp = 0.5 + (j - 0.5) * 0.50;
       let r = lerp(cDark[0], cLight[0], ramp);
       let g = lerp(cDark[1], cLight[1], ramp);
       let b = lerp(cDark[2], cLight[2], ramp);
-      const toneJitter = 1 + (j2 - 0.5) * 0.17;
+      const toneJitter = 1 + (j2 - 0.5) * 0.10;
       r *= toneJitter;
       g *= toneJitter;
       b *= toneJitter;
@@ -136,7 +138,7 @@ export function generateBrickPixels(opts = {}) {
       const ll = 1 - smoothstep(0, bevel, dLeft);
       const db = 1 - smoothstep(0, bevel, dBottom);
       const dr = 1 - smoothstep(0, bevel, dRight);
-      const shade = 1 + 0.13 * Math.max(lt, ll * 0.8) - 0.12 * Math.max(db, dr * 0.8);
+      const shade = 1 + 0.09 * Math.max(lt, ll * 0.8) - 0.08 * Math.max(db, dr * 0.8);
       r *= shade;
       g *= shade;
       b *= shade;
@@ -153,9 +155,12 @@ export function generateBrickPixels(opts = {}) {
       // Mortar joints — lighter than the brick faces (REFERENCE.md 2.2). Blended in
       // last and unshaded, otherwise the bevel darkens exactly the pixels that are
       // supposed to be the brightest thing in the wall.
-      const mortarMask = 1 - smoothstep(jointHalf - 0.3, jointHalf + 0.45, edge);
+      // The shader lays its own joint over exactly these pixels, so the tile only needs to
+      // carry a fraction of the lift; at full strength the two stacked and the joints came
+      // out as hard white lines instead of the reference's barely-there 10-level rise.
+      const mortarMask = (1 - smoothstep(jointHalf - 0.3, jointHalf + 0.45, edge)) * 0.55;
       if (mortarMask > 0) {
-        const mj = 1 + (hash2(pxi, py, 4242) - 0.5) * 0.09 + (mottle - 1) * 0.5;
+        const mj = 1 + (hash2(pxi, py, 4242) - 0.5) * 0.06 + (mottle - 1) * 0.5;
         r = lerp(r, cMortar[0] * mj, mortarMask);
         g = lerp(g, cMortar[1] * mj, mortarMask);
         b = lerp(b, cMortar[2] * mj, mortarMask);

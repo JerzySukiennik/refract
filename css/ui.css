@@ -25,15 +25,16 @@
   --fill-raised: #0f0d13;
 
   --white: #fffdff;
-  --amber: #edb950;
-  --amber-dim: #9c682c;
-  --accent: #4696e7;
-  --accent-deep: #2131c7;
-  --danger: #c7314a;
 
-  --led-blue: #2e7bff;
-  --led-green: #4cff5c;
-  --led-orange: #ff9a20;
+  /* State colours — NEUTRAL BY CONTRACT. Measured over the reference's title, chip row and
+     dock, chrome chroma (max channel minus min channel) is mean 4.3-5.5 with p95 <= 12; the
+     amber #EDB950 (chroma 157), blue #4696E7 (161) and green #6FBF7A (80) this chrome used
+     to carry were 13-30x that and were the loudest thing on screen. State is signalled with
+     BRIGHTNESS instead: dimmer than base means recessive, brighter means active, brightest
+     means best. Every value below stays inside chroma 12. */
+  --sig-hi: #f0eef2;    /* chroma 4  — best / beaten par / active */
+  --sig-mid: #c9c6cc;   /* chroma 6  — pinned, current, focused */
+  --sig-warn: #e2dad6;  /* chroma 12 — alert, over par: a warm cast, not a hue */
 
   /* Type — sized against the board so the chrome scales with it. */
   --font: 'Share Tech Mono', 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
@@ -46,18 +47,41 @@
   --fs-small: clamp(8.5px, calc(var(--board-size) * 0.0150), 14px);
   --fs-solved: clamp(28px, calc(var(--board-size) * 0.0563), 54px);
 
-  /* The smaller the text, the wider the tracking. */
-  --tr-title: 0.21em;
-  --tr-micro: 0.47em;
+  /* ---- LETTERFORM WIDTH ----
+     REFERENCE 3 states the target itself: ink width / cap height measures 0.62-0.77. Share
+     Tech Mono is the right LETTERFORM (rounded-rect O, barred G, straight R leg, shallow M
+     vertex) but the wrong PROPORTION — 0.5 em advance against a 0.72 em cap gives ink/cap
+     0.515, measured on our own rendered title. Padding the difference with tracking lands
+     the advance on the reference's 12.7 px while leaving the glyphs 30 % too narrow: right
+     spacing, wrong letters, and the chrome reads sparse and hairline instead of engraved.
+
+     Michroma was considered and rejected by arithmetic, not taste: at cap 13 px its em is
+     ~18.6 px and a single M advances ~22 px against the measured 12.7, so no amount of
+     negative tracking recovers it without collisions.
+
+     The fix keeps the face and changes its proportion. Every widened role is set --gw-k
+     times larger and squashed back by --gw-y = 1 / --gw-k, so cap height is unchanged and
+     ink grows 32.5 % wider. Crucially the HORIZONTAL layout is untouched: per-glyph advance
+     is (0.5em + tracking) x font-size, and every tracking token below is pre-divided by
+     --gw-k so that product is identical to what it was. Chip widths, the 3 px chip gap, the
+     dock tile, the title's 13.5 px advance and every other measured box survive intact. */
+  --gw-k: 1.325;
+  --gw-y: 0.754717;
+
+  /* Tracking, expressed in the WIDENED em. The comment gives the effective tracking, i.e.
+     what these resolve to at the pre-widening font size: tr_stored = (0.5 + tr_eff) / 1.325
+     - 0.5. The smaller the text, the wider the tracking. */
+  --tr-title: 0.0358em;   /* effective 0.21em */
+  --tr-micro: 0.2321em;   /* effective 0.47em */
   /* Measured off ref_001: glyph advance in RESET/HINT/LEVELS/SOUND is 4.7 px at a 4.5 px
      cap, i.e. 0.75 em total advance — 0.21 em of tracking on top of the 0.54 em face. */
-  --tr-btn: 0.21em;
-  --tr-small: 0.34em;
-  --tr-hint: 0.30em;
+  --tr-btn: 0.0358em;     /* effective 0.21em */
+  --tr-small: 0.1340em;   /* effective 0.34em */
+  --tr-hint: 0.1038em;    /* effective 0.30em */
   /* The dock label is the one 7 px role the reference tracks TIGHT: measured advance across
      MIRROR in ref_001 is 4.6 px, so the whole word clears the 53 px tile with 12 px of air
      each side. At --tr-micro it overran the tile's own border. */
-  --tr-tile: 0.15em;
+  --tr-tile: -0.0094em;   /* effective 0.15em */
 
   /* Rhythm */
   --inset: clamp(12px, 2.08vw, 26px);
@@ -106,6 +130,20 @@ body {
   -webkit-user-select: none;
 }
 
+/* ---------- widened glyph run ----------
+   Used as an inner span wherever the element's own box must keep its padding and border at
+   the unwidened size (chips, panel buttons). Leaf text elements apply the same three
+   properties directly — see .level-tag, .hint-line and friends. */
+
+.gw {
+  display: inline-block;
+  font-size: calc(1em * var(--gw-k));
+  letter-spacing: var(--tr-btn);
+  /* Relative to the widened font size, so the line box is exactly 1em of the PARENT. */
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
+}
+
 /* ---------- cursors ---------- */
 
 html { cursor: var(--cur-idle), none; }
@@ -143,6 +181,27 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   z-index: 1;
   touch-action: none;
 }
+
+/* ---------- modal dim, board only ----------
+   Sits between the canvas (z 1) and the chrome (z 10), so its blur and dim reach the board
+   and nothing else. The overlay's own scrim used to carry this backdrop-filter from z 30,
+   which dropped the level title's peak luminance by 77 % and spread its edges from 0.5 px
+   to 7.5 px — the chip row and the title turned to smear. ref_034 keeps every piece of
+   chrome fully crisp behind its solve panel. */
+
+#dim-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(2, 1, 4, 0.55);
+  backdrop-filter: blur(3px) saturate(0.75);
+  -webkit-backdrop-filter: blur(3px) saturate(0.75);
+  transition: opacity var(--t-mid) var(--ease);
+}
+
+html[data-modal="open"] #dim-layer { opacity: 1; }
 
 /* ---------- hud shell ---------- */
 
@@ -185,28 +244,44 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 }
 
 .level-tag {
-  margin: 0 0 0.81em;
-  font-size: var(--fs-micro);
+  /* 0.81em at the pre-widening size; the widened font is --gw-k larger, so the em-based
+     margin is pre-divided to keep the measured cap bands where they were. */
+  margin: 0 0 0.6113em;
+  font-size: calc(var(--fs-micro) * var(--gw-k));
   letter-spacing: var(--tr-micro);
   color: var(--ink-tag);
-  line-height: 1;
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
 }
 
 .level-name {
   margin: 0;
   font-size: var(--fs-title);
   font-weight: 400;
-  letter-spacing: var(--tr-title);
-  color: var(--ink-title);
   line-height: 1.05;
+  color: var(--ink-title);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: clip;
   text-shadow: 0 0 18px rgba(200, 196, 210, 0.14);
 }
 
-.title-block.is-swapping .level-tag,
+.level-name .gw {
+  letter-spacing: var(--tr-title);
+  /* 1.05 at the pre-widening size. */
+  line-height: 0.7925;
+}
+
+.title-block.is-swapping .level-tag { animation: tag-in 420ms var(--ease) both; }
 .title-block.is-swapping .level-name { animation: title-in 420ms var(--ease) both; }
+
+/* The tag carries its own scaleY and the title carries it on its inner glyph run, so the
+   two need different keyframes: a shared one would either flatten the tag's letterforms
+   back to hairline for 420 ms or squash the title twice over. */
+@keyframes tag-in {
+  from { opacity: 0; transform: translateY(-4px) scaleY(var(--gw-y)); filter: blur(2px); }
+  to   { opacity: 1; transform: translateY(0) scaleY(var(--gw-y)); filter: none; }
+}
 
 @keyframes title-in {
   from { opacity: 0; transform: translateY(-4px); filter: blur(2px); }
@@ -229,7 +304,6 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   appearance: none;
   font: inherit;
   font-size: var(--fs-btn);
-  letter-spacing: var(--tr-btn);
   /* No indent compensation: the reference label is left-biased inside its box (ink starts
      5 px from the border, ends 8 px from the far one — the trailing track is left in). */
   text-indent: 0;
@@ -238,7 +312,8 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   border: 1px solid var(--line);
   border-radius: var(--radius);
   /* Hugs the label horizontally, generous vertically: 5 px sides, 3.9 px top and bottom at
-     the 6.25 px reference size, landing RESET on 35 x 16 px. */
+     the 6.25 px reference size, landing RESET on 35 x 16 px. The label's widened glyph run
+     occupies exactly the same layout width it did before, so this box is unchanged. */
   padding: 0.62em 0.8em;
   line-height: 1;
   transition: color var(--t-fast) var(--ease),
@@ -246,6 +321,8 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
               background-color var(--t-fast) var(--ease),
               box-shadow var(--t-fast) var(--ease);
 }
+
+.chip .gw { letter-spacing: var(--tr-btn); }
 
 .chip::after {
   content: '';
@@ -269,14 +346,15 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 .chip:focus-visible {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--sig-mid);
   color: var(--ink-title);
-  box-shadow: 0 0 0 1px rgba(70, 150, 231, 0.35);
+  box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35);
 }
 
+/* Pinned hint: brighter ink and a brighter border, no hue. */
 .chip[aria-pressed="true"][data-action="hint"] {
-  color: var(--amber);
-  border-color: rgba(237, 185, 80, 0.42);
+  color: var(--ink-title);
+  border-color: rgba(245, 242, 246, 0.42);
 }
 
 /* The sound chip carries its state in the label — SOUND / MUTED, five glyphs either way —
@@ -289,29 +367,36 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 .chip-sound[aria-pressed="false"]:hover { color: var(--ink-soft); border-color: var(--line); }
 
-/* ---------- hint strip under the board ---------- */
+/* ---------- the strip under the board ---------- */
 
-/* REFERENCE 10.2 item 9: the reference crams the hint and USED/PAR into one 9 px strip and
-   draws the hint over the brick at #634A48-on-#815751. We give the hint its own row, anchored
-   above the dock so it can never collide with it, and land it in the clear black band just
-   below the board's bottom edge — never over the brick. USED/PAR moves beside the dock. */
-.hint-line {
+/* REFERENCE 10.2 item 9 and ref_001: the reference gives the hint and USED/PAR ONE 9 px
+   strip centred under the board and shows exactly one of them at a time. Ours used to run
+   the hint here and exile the readout to the bottom-left viewport corner, where at
+   1440x900 it ended up ~590 px from the dock it describes, alone in an empty margin.
+   Anchored by its bottom edge, so a long hint grows upward into the empty band between the
+   board and the dock instead of pushing down into the tiles. */
+.board-strip {
   position: absolute;
   left: 50%;
   bottom: calc(max(var(--inset), env(safe-area-inset-bottom)) + var(--tile-h) + 4px);
   transform: translateX(-50%);
-  margin: 0;
   /* max() floors the width: --board-size is written from the render transform, and a
-     degenerate transform must not collapse the hint to nothing. */
+     degenerate transform must not collapse the strip to nothing. */
   width: min(92vw, max(240px, calc(var(--board-size) * 1.02)));
   text-align: center;
-  font-size: var(--fs-micro);
+}
+
+.board-strip .is-hidden { display: none; }
+
+.hint-line {
+  margin: 0;
+  font-size: calc(var(--fs-micro) * var(--gw-k));
   letter-spacing: var(--tr-hint);
   text-indent: var(--tr-hint);
   color: var(--ink-dim);
-  line-height: 1.5;
-  /* Anchored by its bottom edge, so a long hint grows upward into the empty band between
-     the board and the dock instead of pushing down into the tiles. */
+  /* 1.5 at the pre-widening size. */
+  line-height: 1.1321;
+  transform: scaleY(var(--gw-y));
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -321,19 +406,35 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 8px rgba(0, 0, 0, 0.9);
 }
 
-.hint-line.is-pinned { color: var(--amber); }
-.hint-line.is-alert { color: var(--danger); }
+/* Brightness, not hue: pinned is brighter than base, alert is brighter still and warm. */
+.hint-line.is-pinned { color: var(--sig-mid); }
+.hint-line.is-alert { color: var(--sig-warn); }
 .hint-line.is-swapping { animation: hint-in 260ms var(--ease) both; }
 
 @keyframes hint-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(2px); }
-  to   { opacity: 1; transform: translateX(-50%); }
+  from { opacity: 0; transform: translateY(2px) scaleY(var(--gw-y)); }
+  to   { opacity: 1; transform: translateY(0) scaleY(var(--gw-y)); }
 }
+
+.readout {
+  margin: 0;
+  white-space: nowrap;
+  font-size: calc(var(--fs-micro) * var(--gw-k));
+  letter-spacing: var(--tr-micro);
+  text-indent: var(--tr-micro);
+  color: var(--ink-dim);
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
+  transition: color var(--t-mid) var(--ease);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 8px rgba(0, 0, 0, 0.9);
+}
+
+.readout-sep { margin: 0 0.0755em; opacity: 0.6; }
+.readout.is-over .readout-used { color: var(--sig-warn); }
+.readout.is-under .readout-used { color: var(--sig-hi); }
 
 /* ---------- dock ---------- */
 
-/* Three columns so the dock stays exactly centred on the frame (REFERENCE 1.4) while the
-   readout sits beside it rather than stealing the hint's row. */
 .dock-zone {
   position: absolute;
   left: var(--inset);
@@ -341,36 +442,12 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   /* REFERENCE 1.4: the dock's bottom edge sits 16 px off the frame bottom (y 634-678 in a
      694 px frame), which also puts it 13 px below the board. */
   bottom: max(var(--inset), env(safe-area-inset-bottom));
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
+  justify-content: center;
   align-items: center;
-  column-gap: clamp(10px, 2.4vw, 26px);
 }
-
-/* Anchored to the frame's left margin so it mirrors the title block's inset instead of
-   floating half-way to the dock with the whole right third empty. Four corners: title,
-   chips, readout, and the dock centred between them. */
-.readout {
-  grid-column: 1;
-  justify-self: start;
-  text-align: left;
-  white-space: nowrap;
-  margin: 0;
-  font-size: var(--fs-micro);
-  letter-spacing: var(--tr-micro);
-  text-indent: var(--tr-micro);
-  color: var(--ink-dim);
-  line-height: 1;
-  transition: color var(--t-mid) var(--ease);
-}
-
-.readout-sep { margin: 0 0.1em; opacity: 0.6; }
-.readout.is-over .readout-used { color: var(--amber); }
-.readout.is-under .readout-used { color: #6fbf7a; }
 
 .dock {
-  grid-column: 2;
-  justify-self: center;
   display: flex;
   gap: 6px;
   pointer-events: auto;
@@ -427,12 +504,14 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0.29em;
+  /* 0.29em at the pre-widening size. */
+  bottom: 0.2189em;
   text-align: center;
-  font-size: var(--fs-micro);
+  font-size: calc(var(--fs-micro) * var(--gw-k));
   letter-spacing: var(--tr-tile);
   text-indent: 0;
-  line-height: 1;
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
 }
 
 .dock-tile:hover:not(.is-empty) {
@@ -447,13 +526,13 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 .dock-tile:focus-visible {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(70, 150, 231, 0.35);
+  border-color: var(--sig-mid);
+  box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35);
 }
 
 .dock-tile.is-armed {
-  border-color: rgba(70, 150, 231, 0.7);
-  background: #0b1018;
+  border-color: rgba(240, 238, 242, 0.75);
+  background: #131019;
 }
 
 .dock-tile.is-empty {
@@ -512,12 +591,13 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 #modal-root.is-open { display: flex; }
 
+/* The dim and blur live on #dim-layer, under the chrome. This is only the click target that
+   dismisses the panel, plus the cover that keeps the HUD's own buttons unreachable while a
+   panel is up. */
 .scrim {
   position: absolute;
   inset: 0;
-  background: rgba(2, 1, 4, 0.55);
-  backdrop-filter: blur(3px) saturate(0.75);
-  -webkit-backdrop-filter: blur(3px) saturate(0.75);
+  background: transparent;
   animation: scrim-in var(--t-mid) var(--ease) both;
   pointer-events: auto;
 }
@@ -555,32 +635,36 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 .panel-word {
   margin: 0;
-  font-size: var(--fs-solved);
+  font-size: calc(var(--fs-solved) * var(--gw-k));
   font-weight: 400;
   letter-spacing: var(--tr-small);
   text-indent: var(--tr-small);
   color: #ffffff;
-  line-height: 1;
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
   text-shadow: 0 0 34px rgba(255, 255, 255, 0.22);
   animation: word-in 520ms var(--ease) 40ms both;
 }
 
+/* Animates opacity, tracking and blur only — never transform, so the widening survives. */
 @keyframes word-in {
   from { opacity: 0; letter-spacing: 0.62em; filter: blur(4px); }
   to   { opacity: 1; letter-spacing: var(--tr-small); filter: none; }
 }
 
 .panel-sub {
-  margin: 1.35em 0 0;
-  font-size: var(--fs-micro);
-  letter-spacing: 0.26em;
-  text-indent: 0.26em;
+  /* 1.35em at the pre-widening size. */
+  margin: 1.0189em 0 0;
+  font-size: calc(var(--fs-micro) * var(--gw-k));
+  letter-spacing: 0.0736em;   /* effective 0.26em */
+  text-indent: 0.0736em;
   color: #8a888c;
-  line-height: 1.6;
+  line-height: 1.2075;        /* 1.6 at the pre-widening size */
+  transform: scaleY(var(--gw-y));
 }
 
-.panel-sub .accent { color: var(--amber); }
-.panel-sub .good { color: #6fbf7a; }
+.panel-sub .accent { color: var(--sig-warn); }
+.panel-sub .good { color: var(--sig-hi); }
 
 .panel-actions {
   margin-top: 1.7em;
@@ -594,7 +678,6 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   appearance: none;
   font: inherit;
   font-size: var(--fs-btn);
-  letter-spacing: var(--tr-btn);
   text-indent: 0;
   /* REFERENCE 9.3: FREE PLAY is 71 x 20 px — the same label size as a chip inside far more
      generous padding (12 px sides, 5.9 px top and bottom). */
@@ -610,8 +693,10 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
               box-shadow var(--t-fast) var(--ease);
 }
 
+.btn .gw { letter-spacing: var(--tr-btn); }
+
 .btn:hover { color: var(--ink-title); border-color: #56525c; background: #121019; }
-.btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(70, 150, 231, 0.35); }
+.btn:focus-visible { outline: none; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35); }
 .btn-primary:focus-visible { border-color: var(--white); box-shadow: 0 0 0 2px rgba(8, 6, 12, 0.9), 0 0 0 3px rgba(245, 244, 246, 0.55); }
 
 /* The panel takes the opening focus (js/ui/modals.js), so the win screen's hero button is
@@ -638,12 +723,13 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 /* The only heading a panel gets, so it has to clear the panel fill: --ink-dim on
    --fill-panel is 3.4:1, where the old --ink-tag was 2.4:1. */
 .panel-head {
-  margin: 0 0 1.6em;
-  font-size: var(--fs-micro);
+  margin: 0 0 1.2075em;   /* 1.6em at the pre-widening size */
+  font-size: calc(var(--fs-micro) * var(--gw-k));
   letter-spacing: var(--tr-micro);
   text-indent: var(--tr-micro);
   color: var(--ink-dim);
-  line-height: 1;
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
 }
 
 /* levels grid */
@@ -676,40 +762,45 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 }
 
 .level-cell .cell-no {
-  font-size: var(--fs-micro);
+  font-size: calc(var(--fs-micro) * var(--gw-k));
   letter-spacing: var(--tr-micro);
   color: var(--ink-tag);
-  line-height: 1;
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
 }
 
 .level-cell .cell-name {
-  font-size: var(--fs-micro);
-  letter-spacing: 0.16em;
-  line-height: 1.35;
+  font-size: calc(var(--fs-micro) * var(--gw-k));
+  letter-spacing: -0.0019em;   /* effective 0.16em */
+  line-height: 1.0189;         /* 1.35 at the pre-widening size */
+  transform: scaleY(var(--gw-y));
   color: inherit;
 }
 
 .level-cell .cell-score {
   margin-top: auto;
-  font-size: var(--fs-micro);
-  letter-spacing: 0.2em;
+  font-size: calc(var(--fs-micro) * var(--gw-k));
+  letter-spacing: 0.0283em;    /* effective 0.20em */
   color: var(--ink-tag);
-  line-height: 1;
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
 }
 
 .level-cell.is-open { border-color: var(--line); }
 .level-cell.is-open:hover { border-color: #56525c; background: #0d0a13; color: var(--ink-title); transform: translateY(-1px); }
-.level-cell.is-done { border-color: rgba(111, 191, 122, 0.28); }
-.level-cell.is-done .cell-score { color: #6fbf7a; }
-.level-cell.is-best .cell-score { color: var(--amber); }
-.level-cell.is-current { border-color: var(--accent); color: var(--ink-title); }
+/* Cleared, current and beaten-par are all told apart by BRIGHTNESS — a green border, a blue
+   border and an amber score were the three loudest hues in the whole build. */
+.level-cell.is-done { border-color: rgba(201, 198, 204, 0.30); }
+.level-cell.is-done .cell-score { color: var(--ink-soft); }
+.level-cell.is-best .cell-score { color: var(--sig-hi); }
+.level-cell.is-current { border-color: var(--sig-mid); color: var(--ink-title); }
 /* 23 of 24 cells are locked on a first run, so this opacity decides whether the grid is a
    list or a smudge. At 0.34 the names composited to ~#111 on the panel — 1.2:1. */
 .level-cell.is-locked { opacity: 0.62; }
 .level-cell.is-locked .cell-name { color: var(--ink-dim); }
 .level-cell.is-locked .cell-no,
 .level-cell.is-locked .cell-score { color: var(--ink-tag); }
-.level-cell:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(70, 150, 231, 0.35); }
+.level-cell:focus-visible { outline: none; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35); }
 
 /* forms */
 
@@ -722,13 +813,16 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 .field span {
   display: block;
-  margin-bottom: 0.6em;
-  font-size: var(--fs-micro);
+  margin-bottom: 0.4528em;    /* 0.6em at the pre-widening size */
+  font-size: calc(var(--fs-micro) * var(--gw-k));
   letter-spacing: var(--tr-micro);
   color: var(--ink-tag);
-  line-height: 1;
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
 }
 
+/* The input keeps its natural proportions: squashing a bordered, padded field vertically
+   would drag its border and caret with it. */
 .field input {
   width: 100%;
   font: inherit;
@@ -744,7 +838,7 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 }
 
 .field input::placeholder { color: #35323a; }
-.field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(70, 150, 231, 0.3); }
+.field input:focus { outline: none; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.3); }
 
 /* player roster */
 
@@ -763,8 +857,16 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   padding: 0.62em 0;
   border-bottom: 1px solid var(--line-dead);
   font-size: var(--fs-micro);
-  letter-spacing: 0.2em;
   color: var(--ink-soft);
+}
+
+/* Widened on the spans, not on the row: the row carries the divider rule. */
+.roster li span {
+  display: inline-block;
+  font-size: calc(1em * var(--gw-k));
+  letter-spacing: 0.0283em;   /* effective 0.20em */
+  line-height: var(--gw-y);
+  transform: scaleY(var(--gw-y));
 }
 
 .roster li:last-child { border-bottom: 0; }
@@ -777,22 +879,25 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   box-shadow: 0 0 8px currentColor;
 }
 
-.roster .self { margin-left: auto; color: var(--ink-tag); letter-spacing: var(--tr-micro); }
+.roster li .self { margin-left: auto; color: var(--ink-tag); letter-spacing: var(--tr-micro); }
 
 .room-code {
-  margin: 0 0 1.4em;
-  font-size: var(--fs-small);
-  letter-spacing: 0.42em;
-  text-indent: 0.42em;
+  margin: 0 0 1.0566em;       /* 1.4em at the pre-widening size */
+  font-size: calc(var(--fs-small) * var(--gw-k));
+  letter-spacing: 0.1943em;   /* effective 0.42em */
+  text-indent: 0.1943em;
   color: var(--ink-title);
+  line-height: 0.9057;        /* 1.2 at the pre-widening size */
+  transform: scaleY(var(--gw-y));
 }
 
 .panel-note {
-  margin: 1.4em 0 0;
-  font-size: var(--fs-micro);
-  letter-spacing: 0.2em;
+  margin: 1.0566em 0 0;       /* 1.4em at the pre-widening size */
+  font-size: calc(var(--fs-micro) * var(--gw-k));
+  letter-spacing: 0.0283em;   /* effective 0.20em */
   color: var(--ink-mute);
-  line-height: 1.6;
+  line-height: 1.2075;        /* 1.6 at the pre-widening size */
+  transform: scaleY(var(--gw-y));
 }
 
 /* ---------- cursor layer ---------- */
@@ -875,12 +980,12 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 @media (max-width: 620px) {
   .hud-top { grid-template-columns: 1fr; }
   .chip-row { justify-content: flex-start; }
-  .level-name { letter-spacing: 0.16em; }
+  .level-name .gw { letter-spacing: -0.0019em; }   /* effective 0.16em */
   .level-grid { grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); width: min(90vw, 560px); }
   .panel { padding: 24px 18px; }
-  /* Narrow frames: tighten the readout's tracking so it still fits beside the centred dock. */
-  .readout { letter-spacing: 0.16em; text-indent: 0.16em; }
-  .hint-line { letter-spacing: 0.18em; text-indent: 0.18em; }
+  /* Narrow frames: tighten tracking so the strip still fits under the board. */
+  .readout { letter-spacing: -0.0019em; text-indent: -0.0019em; }
+  .hint-line { letter-spacing: 0.0132em; text-indent: 0.0132em; }   /* effective 0.18em */
 }
 
 @media (max-width: 420px) {
@@ -893,7 +998,6 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
     --dock-zone: clamp(62px, 15vh, 84px);
     --tile-h: clamp(38px, calc(var(--board-size) * 0.070), 58px);
   }
-  .dock-zone { column-gap: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

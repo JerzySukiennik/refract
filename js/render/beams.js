@@ -9,6 +9,13 @@
 // prism, where the whole spectrum still overlaps, the fan comes out grey for free, and
 // hues separate only once the angular spread exceeds the beam width. That is
 // REFERENCE.md 5.2 -- the one thing a hue-ramp implementation cannot reproduce.
+//
+// The integral is only as good as the linearity of the palette it sums. Every factor in
+// nmToRenderRGB is linear in spectral power for exactly that reason; see the long note
+// above it in spectrum.js. Two settings here finish the job, and both are measured, not
+// tuned by eye: the splat's half-max radius must stay near the white beam's own so the
+// wedge leaves the prism neutral across its full width, and the fan's peak must stay well
+// under the clip point, because a clipped pixel has no hue at all.
 
 import { createProgram, getTransform } from './gl.js';
 import { nmToRenderRGB } from '../optics/spectrum.js';
@@ -36,12 +43,27 @@ const DEFAULTS = {
   // out of the capture at three rows of a long run: 0.797, 0.801, 0.818.
   whiteGain: 0.455,
   whiteHalfWidth: BEAM_HALF_WIDTH,
-  spectralGain: 0.18,
+  // REFERENCE.md 5.3: peak fan brightness is 0.48 of the white beam's own core, and the
+  // fan NEVER clips -- the measured peak is value 0.44 against a core near 0.92. At 0.18
+  // the fan composited to value 1.000 over several degrees of arc at R >= 200 px, and a
+  // clipped pixel has no hue left, which is most of why the far half of the wedge read as
+  // a white-blue disc instead of a spectrum. At 0.095 the fan peaks at 0.46-0.49 of the
+  // white core measured on a clean single-pass fan, inside 5.3's recommended 0.45-0.50.
+  spectralGain: 0.095,
   // A dispersed ray is the same beam, only narrower in wavelength: it keeps the width of
   // the beam that entered the glass. Anything thinner stops neighbouring wavelengths
   // overlapping, and the fan degenerates into a saturated hue ramp with a knife-edge
   // between red and green -- which is exactly what it used to do at 16 u.
-  spectralHalfWidth: BEAM_HALF_WIDTH * 1.5,
+  //
+  // What matters is the ratio of the splat's HALF-MAX radius (which sets how far out the
+  // wedge stays neutral, REFERENCE.md 5.2) to its 10 %-of-peak radius (which sets the
+  // wedge's visible width, 5.1). Widening the profile exponent from 1.90 to 2.60 pulls
+  // that ratio from 1.89 down to 1.62. Together with the 1.5 -> 1.23 half-width, the
+  // half-max radius only comes in from 15.6 reference px to 13.6 -- so the wedge still
+  // leaves the prism neutral, measured sat 0.07-0.14 in its core at R = 45-80 against
+  // REFERENCE.md 5.2's #606467 / #66686B -- while the 10 % radius comes in much harder,
+  // from 29.5 px to 22.0, which is what narrows the visible wedge.
+  spectralHalfWidth: BEAM_HALF_WIDTH * 1.23,
   spectralGrow: 0.012,
   spectralCompRef: 620.0,
   spectralCompMax: 1.35,
@@ -55,27 +77,63 @@ const DEFAULTS = {
   // the shoulder 14 px off the centreline composites to #8D7859 against the reference's
   // measured #907860, i.e. R-B of 48 against 48. At 1.0 it overshoots to 57.
   fringeChroma: 0.85,
-  // REFERENCE.md 4.3 measures the grain at 1.2 % RMS in the video and says to author at
-  // 4-6 %, because the compression eats the rest. The three noise octaves below sum to an
-  // RMS near 0.29, so 0.16 puts the authored figure at 4.6 %. The octave frequencies are
-  // the ones 4.3 measured and must not drift: 0.031, 0.066 and 0.125 per board unit are
-  // periods of 18.3, 8.6 and 4.5 reference px along the beam, and the 0.2 lateral scale is
-  // a 2.8 px correlation length across it.
-  grainAmount: 0.16,
+  // GRAIN IS CALIBRATED ON THE COMPOSITED PNG, NOT AT AUTHORING TIME. REFERENCE.md 4.3
+  // measures 1.0-1.4 % residual sigma over the local mean in the core, and tells you to
+  // author at 4-6 % because video compression eats the rest. Authoring 4.6 % here and
+  // stopping was the bug: between this shader and the final pixel the signal loses about
+  // 14x. Roughly 4x of that is the ACES curve, whose relative gain d(log sRGB)/d(log linear)
+  // is only 0.25 at the core's 0.46 linear radiance, and the remaining ~2x is the 2x
+  // supersample being box-filtered down to 720x694 at capture.
+  //
+  // So this number is set by MEASURING: take the beam centreline out of the PNG, subtract a
+  // 13 px running mean, divide the residual sigma by the local mean. The old 0.16 read
+  // 0.30 %. 0.55 read 2.18 % with the octave weights below, and looked like it: soft cloud.
+  // 0.30 reads 1.03 % on the emitter run of the fresh board, inside 4.3's measured band and
+  // within 8 % of the 0.95 % the same test gives on ref_001 itself.
+  grainAmount: 0.30,
   grainDrift: 26.0,
-  // The wide soft skirt the beam sits in. This is NOT in REFERENCE.md 4.1 -- the reference
-  // beam is measured as dead black 26 px off the centreline -- it is the "very light
-  // volumetric haze so beams read as occupying air" that ARCHITECTURE.md 11 lists as a
-  // deliberate departure. Kept at 3.5 % of core radiance, which composites to roughly
-  // 20/255 just outside the beam's own support and reaches black by 40 reference px: enough
-  // to read as lit air, far too low to register as a second beam. It does widen the
-  // "total visible width" of 4.1 from 52 px to about 72; that is the price of the haze and
-  // it is the only figure in 4.1 this renderer does not hit.
-  haloGain: 0.035,
-  haloWidth: 1.2,
-  haloExtent: 2.6,
+  // The soft skirt the beam sits in: the "very light volumetric haze so beams read as
+  // occupying air" that ARCHITECTURE.md 11 lists as a deliberate departure from 4.1, which
+  // measures the reference beam as effectively black past 26 px.
+  //
+  // It used to be far too generous. Measured against ref_001 at 26 / 30 / 40 px off a clean
+  // centreline the reference falls 2.9 % / 0.5 % / 0.2 % of core, and the old 0.035 / 1.2
+  // lobe held 5.1 % / 3.5 % / 1.4 % -- so the beam never reached black, its silhouette
+  // dissolved and the geometric apex of the V at a mirror went with it. Capturing with the
+  // lobe switched off proved the tail was all halo and not bloom: the same three samples
+  // read 0.4 % / 0.2 % / 0.15 %. The lobe is now less than half as wide and slightly
+  // stronger at its centre, which puts it back under the measured skirt and lets it die by
+  // 40 px, where sRGB's steep toe otherwise magnifies a thousandth of a nit into 4/255.
+  haloGain: 0.055,
+  haloWidth: 0.65,
+  haloExtent: 1.9,
   hotRadius: 22.0,
-  hotGain: 0.75,
+  // REFERENCE.md 4.4 is explicit that at a mirror hit there is NO visible hot spot or flare
+  // beyond the rod's own specular line -- "the beam simply turns" -- and that the glow around
+  // the emitter mouth is only ~0.12 peak. 0.75 was strong enough to bloom a bead into the
+  // inside of every V and soften the apex the reference draws sharp, so the whole term is
+  // pulled back to a little over half.
+  //
+  // It is NOT what blows the emitter out. The clipped pixels at the mouth measure as a
+  // 33 x 2 px horizontal bar at the slit itself, drawn by board.js; dropping this from 0.75
+  // to 0.42 moved the frame maximum only from 0.988 to 0.986. That one belongs to the prop.
+  hotGain: 0.42,
+  // Display-referred shaping of the transported intensity, and the same trick coreProfile
+  // uses a few dozen lines down: the reference's numbers are measured AFTER a tonemap, so
+  // matching them means inverting ours.
+  //
+  // REFERENCE.md 4.5 measures core luma by generation as 0.885 then 0.755 -- a 14.7 % drop
+  // at the first bounce -- and reads R = 0.90 out of it. But 0.90 of the linear radiance,
+  // pushed through ACES at the core's operating point, is a 2 % drop on screen: measured on
+  // r2-folding the three generations came out 0.801 / 0.787 / 0.750, so every leg of a
+  // four-bounce path read the same brightness and the beam lost all sense of travel. The
+  // tracer keeps the physical 0.90 -- that is its contract and it is what the puzzle logic
+  // and the receptors see. This exponent applies only to how it is DRAWN, and only to white
+  // segments: raising it to a power leaves generation 0 at exactly 1.0 and deepens each
+  // later bounce until the drop on screen matches 4.5. Spectral and in-glass segments are
+  // excluded, because their intensities are wavelength weights whose sum has to stay
+  // neutral (see the header) and a power would tilt the spectrum.
+  intensityShape: 4.0,
 };
 
 // Board units for a distance the reference measured in pixels.
@@ -184,6 +242,7 @@ uniform float uFringeOffset;
 uniform float uFringeChroma;
 uniform float uGrainAmount;
 uniform float uGrainDrift;
+uniform float uIntensityShape;
 uniform float uHaloGain;
 uniform float uHaloWidth;
 uniform float uHotRadius;
@@ -246,10 +305,14 @@ float coreProfile(float v) {
 // The dispersed fan is a different problem: dozens of wedges have to sum per pixel into a
 // smooth spectrum, so its profile stays a soft super-gaussian with no hard edge, faded out
 // before the quad boundary so neighbouring wavelengths cross-fade instead of stacking
-// visible rails.
+// visible rails. The exponent is the fan's width control: raising it flattens the top and
+// steepens the skirt, which keeps neighbouring wavelengths overlapping (a neutral wedge
+// near the prism) while shortening the faint tails that were spreading the visible wedge
+// to 41 degrees. At 48 samples over ~29 degrees the sample spacing is under a fifth of the
+// half-max radius, so no exponent in this range can let individual rails show through.
 float spectralProfile(float v) {
   float a = abs(v);
-  float p = exp(-pow(max(a * 2.05, 1e-4), 1.90));
+  float p = exp(-pow(max(a * 2.05, 1e-4), 2.60));
   return p * (1.0 - smoothstep(PROFILE_EXTENT - 0.45, PROFILE_EXTENT, a));
 }
 
@@ -261,6 +324,11 @@ void main() {
   vec3 energy;
   float coreness;
 
+  // See DEFAULTS.intensityShape. White segments only; a spectral segment's intensity is a
+  // wavelength weight and must pass through untouched.
+  float shaped = mix(pow(max(vIntensity, 1e-5), uIntensityShape), vIntensity,
+                     max(vSpectral, vInside));
+
   if (vSpectral > 0.5) {
     float d = capsuleDist(vAlong, vAcross, vLen);
     float p = spectralProfile(d * invHw);
@@ -270,7 +338,7 @@ void main() {
     // over the whole board, dimming only ~14 % across 200 px.
     float comp = 1.0 + uSpecCompMax * min(axialClamped / max(uSpecCompRef, 1.0), 1.0);
     float gain = mix(uSpecGain * comp, uInsideGain, vInside);
-    energy = vColor * (p * gain * vIntensity);
+    energy = vColor * (p * gain * shaped);
     coreness = p;
   } else {
     // REFERENCE.md 4.2. vAcross is already signed by the ray's own transverse frame -- the
@@ -299,17 +367,32 @@ void main() {
     float pB = coreProfile(capsuleDist(vAlong, vAcross + off, vLen) * invHw);
     float fringe = (pR - pB) * 0.5 * uFringeChroma;
     vec3 p = max(vec3(pC + fringe, pC, pC - fringe), vec3(0.0));
-    energy = vColor * p * (uWhiteGain * vIntensity);
+    energy = vColor * p * (uWhiteGain * shaped);
     coreness = pC;
   }
 
+  // Four octaves at the four periods REFERENCE.md 4.3 measured in the residual's power
+  // spectrum -- 18.3, 11.7, 8.4 and 4.5 reference px along the beam, i.e. 0.031, 0.0486,
+  // 0.0676 and 0.126 per board unit -- with the lateral scale giving the ~3 px correlation
+  // length across the beam that the same section measures.
+  //
+  // The weights are tilted UP towards the short periods. An equal-weight or low-tilted
+  // stack reads as cloud, not grain: at 4x zoom it made soft mottled blobs where the
+  // reference shows fine longitudinal striation, because the 18 px octave carries the eye
+  // and the 4.5 px one is invisible under it.
   float drift = uTime * uGrainDrift;
   float ax = vAlong - drift + vSeed * 91.0;
   float lat = vAcross * 0.2 + vSeed;
-  float n = vnoise(vec2(ax * 0.031, lat)) - 0.5;
-  n += 0.70 * (vnoise(vec2(ax * 0.066 + 13.7, lat * 1.7 + 4.1)) - 0.5);
-  n += 0.45 * (vnoise(vec2(ax * 0.125 + 71.3, lat * 2.4 + 9.6)) - 0.5);
-  float grainWeight = mix(0.55, 1.0, smoothstep(0.25, 0.9, coreness));
+  float n = 0.55 * (vnoise(vec2(ax * 0.0310, lat)) - 0.5);
+  n += 0.80 * (vnoise(vec2(ax * 0.0486 + 13.7, lat * 1.4 + 4.1)) - 0.5);
+  n += 1.00 * (vnoise(vec2(ax * 0.0676 + 71.3, lat * 1.9 + 9.6)) - 0.5);
+  n += 0.85 * (vnoise(vec2(ax * 0.1262 + 41.9, lat * 2.6 + 21.4)) - 0.5);
+  // REFERENCE.md 4.3 puts the grain at 1.0-1.4 % in the core, 0.6-0.9 % on the shoulders and
+  // 0.5 % in the wings, so it is weighted by how core-like the sample is. The window is
+  // tighter than it used to be: a multiplicative ripple riding the steep outer gradient
+  // displaces the silhouette sideways and gave the beam a visibly wavy edge, which the
+  // reference does not have.
+  float grainWeight = mix(0.30, 1.0, smoothstep(0.35, 0.95, coreness));
   energy *= max(1.0 + n * uGrainAmount * grainWeight, 0.0);
 
   // The haze skirt. Added after the grain so it stays smooth -- dust in the air scatters an
@@ -319,7 +402,7 @@ void main() {
   // wide and a full spectrum puts two hundred of them on screen at once.
   if (vSpectral <= 0.5 && vInside <= 0.5) {
     float hv = capsuleDist(vAlong, vAcross, vLen) * invHw / max(uHaloWidth, 1e-3);
-    energy += vColor * (exp(-hv * hv) * uHaloGain * uWhiteGain * vIntensity);
+    energy += vColor * (exp(-hv * hv) * uHaloGain * uWhiteGain * shaped);
   }
 
   float dA = length(vec2(vAlong, vAcross));
@@ -394,6 +477,7 @@ export function createBeamRenderer(gl) {
     fringeChroma: gl.getUniformLocation(program, 'uFringeChroma'),
     grainAmount: gl.getUniformLocation(program, 'uGrainAmount'),
     grainDrift: gl.getUniformLocation(program, 'uGrainDrift'),
+    intensityShape: gl.getUniformLocation(program, 'uIntensityShape'),
     haloGain: gl.getUniformLocation(program, 'uHaloGain'),
     haloWidth: gl.getUniformLocation(program, 'uHaloWidth'),
     haloExtent: gl.getUniformLocation(program, 'uHaloExtent'),
@@ -548,6 +632,7 @@ export function createBeamRenderer(gl) {
     g.uniform1f(uni.fringeChroma, params.fringeChroma);
     g.uniform1f(uni.grainAmount, params.grainAmount);
     g.uniform1f(uni.grainDrift, params.grainDrift);
+    g.uniform1f(uni.intensityShape, params.intensityShape);
     g.uniform1f(uni.haloGain, params.haloGain);
     g.uniform1f(uni.haloWidth, params.haloWidth);
     g.uniform1f(uni.haloExtent, params.haloExtent);

@@ -64,6 +64,7 @@ const A = {
   lastEnergyWrite: 0,
   lastTickHz: 0,
   suspendTimer: 0,
+  humTrailing: 0,
   seed: 0x9e3779b9,
   warned: new Set(),
   listening: false,
@@ -357,7 +358,17 @@ function applyHum(force) {
   const n = A.nodes;
   if (!n || !n.humParts) return;
   const t = now();
-  if (!force && t - A.lastEnergyWrite < 0.05) return;
+  if (!force && t - A.lastEnergyWrite < 0.05) {
+    // Trailing edge: without this the last trace of a burst — the one that actually holds
+    // the final beam length — was dropped by the throttle and the hum never arrived.
+    if (!A.humTrailing) {
+      A.humTrailing = setTimeout(() => {
+        A.humTrailing = 0;
+        safe(() => applyHum(true));
+      }, 60);
+    }
+    return;
+  }
   A.lastEnergyWrite = t;
 
   const cfg = A.manifest.synth.hum;
@@ -737,7 +748,7 @@ export function play(name, opts) {
   if (cooldownBlocked(key, def, o.cooldown)) return;
   safe(() => {
     if (def.synth === 'tick') {
-      tickVoice(o.angle || 0, (def.gain || 1) * (o.gain || 1), panFor(o));
+      tickVoice(o.angle || 0, (def.gain || 1) * (o.gain || 1), panFor(o), o.semitones || 0);
     } else if (def.synth === 'bell') {
       chimeVoice(o.index || 0, o);
     } else if (def.synth === 'solve') {
@@ -774,13 +785,13 @@ export function setLitCount(n) {
   safe(() => applyHum(false));
 }
 
-function tickVoice(angle, gainScale, pan) {
+function tickVoice(angle, gainScale, pan, semitones) {
   const ctx = A.ctx;
   const cfg = A.manifest.synth.tick;
   if (A.synthVoices > A.manifest.master.synthCap * 0.5) return;
   const tau = Math.PI * 2;
   const norm = (((angle % tau) + tau) % tau) / tau;
-  let hz = cfg.baseHz * Math.pow(2, norm * cfg.octaves);
+  let hz = cfg.baseHz * Math.pow(2, norm * cfg.octaves + (semitones || 0) / 12);
   if (Math.abs(hz - A.lastTickHz) < 1) hz *= 1 + (rnd() - 0.5) * 0.04;
   A.lastTickHz = hz;
 
@@ -832,7 +843,7 @@ export function rotateTick(angle, opts) {
   const def = A.manifest.sounds.rotate_tick || { gain: 0.3, cooldown: 22 };
   const o = opts || {};
   if (cooldownBlocked('rotate_tick', def, o.cooldown)) return;
-  safe(() => tickVoice(angle || 0, (def.gain || 1) * (o.gain || 1), panFor(o)));
+  safe(() => tickVoice(angle || 0, (def.gain || 1) * (o.gain || 1), panFor(o), o.semitones || 0));
 }
 
 function chimeVoice(index, opts) {
@@ -910,6 +921,8 @@ export function setMasterVolume(v) {
 export function dispose() {
   if (A.suspendTimer) clearTimeout(A.suspendTimer);
   A.suspendTimer = 0;
+  if (A.humTrailing) clearTimeout(A.humTrailing);
+  A.humTrailing = 0;
   if (A.ctx) safe(() => A.ctx.close());
   A.ctx = null;
   A.nodes = null;

@@ -246,6 +246,10 @@ function onArmedPointerDown(ev) {
 
 /* ---------- hint line ---------- */
 
+/* The strip under the board carries the hint OR the USED/PAR readout, never both — the
+   reference gives them one 9 px row and shows exactly one at a time (ref_001 shows the hint
+   on a fresh board and no readout at all). `ambient` marks the one line that says nothing
+   the player does not already know; that is the state where the readout takes the strip. */
 function contextualHint() {
   const lvl = state.level || {};
   const drag = state.dragging;
@@ -271,11 +275,14 @@ function contextualHint() {
     return { text: 'NOTHING LEFT TO PLACE · MOVE A PIECE OR RESET', tone: '' };
   }
   if (usedCount() === 0 && lvl.hint) return { text: String(lvl.hint).toUpperCase(), tone: '' };
-  return { text: 'DRAG A PIECE ONTO THE BOARD · DRAG IT AGAIN TO TURN IT', tone: '' };
+  return { text: 'DRAG A PIECE ONTO THE BOARD · DRAG IT AGAIN TO TURN IT', tone: '', ambient: true };
 }
 
 function updateHint() {
-  const { text, tone } = contextualHint();
+  const { text, tone, ambient } = contextualHint();
+  // Mid-solve, with nothing selected and nothing to say: the strip belongs to USED / PAR.
+  el.hint.classList.toggle('is-hidden', !!ambient);
+  el.readout.classList.toggle('is-hidden', !ambient);
   if (text !== lastHintText) {
     el.hint.textContent = text;
     el.hint.classList.remove('is-swapping');
@@ -328,7 +335,9 @@ function updateSound() {
   const on_ = state.sound !== false;
   el.sound.setAttribute('aria-pressed', on_ ? 'true' : 'false');
   // Five glyphs either way, so the chip keeps its width while the state stays readable.
-  el.sound.textContent = on_ ? 'SOUND' : 'MUTED';
+  // The text lives on the inner .gw span; writing the button's own textContent would delete
+  // the span and drop the label back to the unwidened letterforms.
+  el.soundLabel.textContent = on_ ? 'SOUND' : 'MUTED';
   el.sound.title = on_ ? 'Sound on' : 'Sound off';
 }
 
@@ -469,6 +478,7 @@ export function initHUD() {
     dock: document.getElementById('dock'),
     sound: root.querySelector('[data-action="sound"]'),
   };
+  el.soundLabel = el.sound.querySelector('.gw') || el.sound;
 
   el.chips.addEventListener('click', onChipClick);
   el.chips.addEventListener('pointerenter', onChipHover, true);

@@ -1,6 +1,7 @@
 // Pointer, touch, wheel and keyboard handling: raw events become intents against js/state.js, in board units.
 
 import { pixelToBoard } from './render/gl.js';
+import { rotateTick } from './audio.js';
 import {
   state,
   addOptic,
@@ -23,6 +24,12 @@ const WALL = 40;
 const PLACE_SNAP = 25;
 const RING_RADIUS = 67;
 const HANDLE_GRAB = 26;
+// A finger is not a mouse: at the measured mobile board scale of 0.2958 px/unit the 26-unit
+// grab radius is a 15.4 px target, well under the 44 px minimum, for the one gesture the
+// hint text explicitly asks for. Coarse pointers get double the radius (30.8 px). It stops
+// short of the full 74 units that 44 px would need because a circle that big would reach
+// past the optic centre and steal every body drag.
+const HANDLE_GRAB_COARSE = 52;
 const WALL_CLEARANCE = 16;
 const BODY_RADIUS = { mirror: 55, prism: 43 };
 const GRAB_RADIUS = { mirror: 62, prism: 50 };
@@ -95,6 +102,48 @@ export function snapAngle(a, free) {
   return (out * Math.PI) / 180;
 }
 
+// Rotation is quantised to 5 degrees with a magnet at every 15, but the protractor ring is
+// contractually forbidden from drawing degree ticks (ARCHITECTURE.md 11.4). The grid is
+// therefore invisible, so it has to be audible and — on a phone — palpable instead.
+const MAGNET_STEP_DEG = 15;
+// Short enough that a fast flick still ticks once per 5-degree detent; long enough that a
+// jittering pointer sitting on one detent cannot machine-gun the voice.
+const DETENT_COOLDOWN_MS = 10;
+const ACCENT_GAIN = 2;
+const ACCENT_SEMITONES = 3;
+
+function degOf(angle) {
+  const d = ((((angle * 180) / Math.PI) % 360) + 360) % 360;
+  return Math.round(d * 100) / 100;
+}
+
+function onMagnet(deg) {
+  const k = deg / MAGNET_STEP_DEG;
+  return Math.abs(k - Math.round(k)) < 0.02;
+}
+
+function buzz(ms) {
+  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+  try {
+    navigator.vibrate(ms);
+  } catch (err) {
+    void err;
+  }
+}
+
+// One tick per crossed detent; the 15-degree magnets get a louder, higher accent so the
+// magnet reads as magnetic rather than as an arbitrary stutter in the 5-degree stepping.
+function detentFeedback(optic, deg, pointerType) {
+  const magnet = onMagnet(deg);
+  rotateTick(optic.angle, {
+    gain: magnet ? ACCENT_GAIN : 1,
+    semitones: magnet ? ACCENT_SEMITONES : 0,
+    panX: optic.x,
+    cooldown: magnet ? 0 : DETENT_COOLDOWN_MS,
+  });
+  if (pointerType === 'touch' || pointerType === 'pen') buzz(magnet ? 8 : 4);
+}
+
 function opticAt(x, y) {
   let best = null;
   let bestDist = Infinity;
@@ -112,7 +161,7 @@ function opticAt(x, y) {
   return best;
 }
 
-function handleAt(x, y) {
+function handleAt(x, y, coarse) {
   const id = state.selectedId;
   if (!id) return false;
   const o = getOptic(id);
@@ -121,7 +170,8 @@ function handleAt(x, y) {
   const hy = o.y - Math.sin(o.angle) * RING_RADIUS;
   const dx = hx - x;
   const dy = hy - y;
-  return dx * dx + dy * dy < HANDLE_GRAB * HANDLE_GRAB;
+  const r = coarse ? HANDLE_GRAB_COARSE : HANDLE_GRAB;
+  return dx * dx + dy * dy < r * r;
 }
 
 function angleFromCentre(o, x, y) {
@@ -205,7 +255,13 @@ export function createInput(canvas, opts = {}) {
   }
 
   function beginRotate(optic, ev) {
-    active = { kind: 'rotate', pointerId: ev.pointerId, id: optic.id, moved: false };
+    active = {
+      kind: 'rotate',
+      pointerId: ev.pointerId,
+      id: optic.id,
+      moved: false,
+      lastDeg: degOf(optic.angle),
+    };
     setDragging({
       kind: 'rotate',
       id: optic.id,
@@ -236,7 +292,7 @@ export function createInput(canvas, opts = {}) {
     if (ev.cancelable) ev.preventDefault();
     const p = toBoard(ev);
     capture(ev, canvas);
-    if (handleAt(p.x, p.y)) {
+    if (handleAt(p.x, p.y, ev.pointerType !== 'mouse')) {
       beginRotate(getOptic(state.selectedId), ev);
       return;
     }
@@ -316,6 +372,11 @@ export function createInput(canvas, opts = {}) {
     if (active.kind === 'rotate') {
       const raw = angleFromCentre(optic, p.x, p.y);
       rotateOptic(optic.id, snapAngle(raw, ev.shiftKey || shift));
+      const deg = degOf(optic.angle);
+      if (deg !== active.lastDeg) {
+        active.lastDeg = deg;
+        detentFeedback(optic, deg, ev.pointerType);
+      }
       const d = state.dragging;
       d.angle = optic.angle;
       setDragging(d);
@@ -367,7 +428,9 @@ export function createInput(canvas, opts = {}) {
     const dir = ev.deltaY > 0 ? -1 : 1;
     const stepDeg = ev.shiftKey ? 1 : 5;
     const deg = (optic.angle * 180) / Math.PI + dir * stepDeg;
-    rotateOptic(optic.id, (deg * Math.PI) / 180);
+    if (rotateOptic(optic.id, (deg * Math.PI) / 180)) {
+      detentFeedback(optic, degOf(optic.angle), 'mouse');
+    }
   }
 
   function onContextMenu(ev) {
@@ -424,7 +487,9 @@ export function createInput(canvas, opts = {}) {
       ev.preventDefault();
       const step = ev.shiftKey ? 1 : 5;
       const deg = (optic.angle * 180) / Math.PI + (key === 'arrowleft' ? step : -step);
-      rotateOptic(optic.id, (deg * Math.PI) / 180);
+      if (rotateOptic(optic.id, (deg * Math.PI) / 180)) {
+        detentFeedback(optic, degOf(optic.angle), 'key');
+      }
     }
   }
 

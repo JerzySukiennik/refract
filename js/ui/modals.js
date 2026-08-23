@@ -117,9 +117,9 @@ function solvedPanel() {
       '<br>' + verdict + '</p>' +
       '<div class="panel-actions">' +
         (hasNext
-          ? '<button type="button" class="btn btn-primary" data-act="next">NEXT LEVEL</button>'
-          : '<button type="button" class="btn btn-primary" data-act="levels">ALL LEVELS</button>') +
-        '<button type="button" class="btn" data-act="free">FREE PLAY</button>' +
+          ? '<button type="button" class="btn btn-primary" data-act="next"><span class="gw">NEXT LEVEL</span></button>'
+          : '<button type="button" class="btn btn-primary" data-act="levels"><span class="gw">ALL LEVELS</span></button>') +
+        '<button type="button" class="btn" data-act="free"><span class="gw">FREE PLAY</span></button>' +
       '</div>',
   };
 }
@@ -160,7 +160,7 @@ function levelsPanel() {
     html:
       '<p class="panel-head">LEVELS &middot; ' + cleared + ' / ' + LEVELS.length + ' CLEARED</p>' +
       '<div class="level-grid">' + cells + '</div>' +
-      '<div class="panel-actions"><button type="button" class="btn" data-act="close">CLOSE</button></div>',
+      '<div class="panel-actions"><button type="button" class="btn" data-act="close"><span class="gw">CLOSE</span></button></div>',
   };
 }
 
@@ -178,8 +178,8 @@ function namePanel() {
         '<label class="field"><span>ROOM CODE</span>' +
         '<input name="room" maxlength="6" required placeholder="ABCD" value="' + esc(room) + '"></label>' +
         '<div class="panel-actions">' +
-          '<button type="submit" class="btn btn-primary">JOIN ROOM</button>' +
-          '<button type="button" class="btn" data-act="close">CANCEL</button>' +
+          '<button type="submit" class="btn btn-primary"><span class="gw">JOIN ROOM</span></button>' +
+          '<button type="button" class="btn" data-act="close"><span class="gw">CANCEL</span></button>' +
         '</div>' +
       '</form>' +
       '<p class="panel-note">SHARE THE CODE &middot; EVERYONE MOVES THE SAME PIECES</p>',
@@ -211,8 +211,8 @@ function multiplayerPanel() {
       '<p class="room-code">' + esc(String(state.roomId || '----').toUpperCase()) + '</p>' +
       '<ul class="roster">' + rows + '</ul>' +
       '<div class="panel-actions">' +
-        '<button type="button" class="btn btn-primary" data-act="close">BACK TO THE BOARD</button>' +
-        '<button type="button" class="btn" data-act="leave">LEAVE</button>' +
+        '<button type="button" class="btn btn-primary" data-act="close"><span class="gw">BACK TO THE BOARD</span></button>' +
+        '<button type="button" class="btn" data-act="leave"><span class="gw">LEAVE</span></button>' +
       '</div>',
   };
 }
@@ -334,6 +334,10 @@ export function showModal(name) {
   current = name;
   rootEl.classList.remove('is-closing');
   rootEl.classList.add('is-open');
+  /* Drives #dim-layer, which sits BELOW the chrome. The dim and blur used to live on the
+     scrim inside this container at z 30, so they smeared the level title and the whole chip
+     row along with the board; ref_034 keeps every piece of chrome crisp behind its panel. */
+  document.documentElement.setAttribute('data-modal', 'open');
 
   /* A form wants its first field. Everything else takes focus on the dialog itself: focusing
      the primary button instead left the SOLVED screen's hero button wearing a permanent blue
@@ -347,6 +351,7 @@ export function hideModal() {
   if (!current) return;
   current = null;
   rootEl.classList.add('is-closing');
+  document.documentElement.removeAttribute('data-modal');
   window.clearTimeout(closeTimer);
   closeTimer = window.setTimeout(() => {
     rootEl.classList.remove('is-open', 'is-closing');
