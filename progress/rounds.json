@@ -1,7 +1,7 @@
 {
   "project": "REFRACT",
   "tagline": "Steering and dispersing light. Built against a reference, round by round.",
-  "updated": "2026-08-23T06:24:12.077831Z",
+  "updated": "2026-08-23T10:13:32.496038Z",
   "verdictLegend": {
     "reference": "The blind critic picked the reference as the polished commercial game. We lost the round.",
     "ours": "The blind critic picked ours as the polished commercial game. We won the round.",
@@ -126,6 +126,38 @@
         {
           "src": "web/r3-fresh.jpg",
           "caption": "Emitter, beam, three lamps"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "title": "The prism becomes a piece",
+      "status": "done",
+      "verdict": "pending",
+      "summary": "Jurek played it and reported that the refractor could not be moved or rotated, and that it ought to be the second thing a player places. He was right, and it was a defect rather than a preference: levels 1 through 4 and TERMINUS shipped the prism inside the level's fixed array with zero prisms in the dock, so across the entire opening of the game the prism was scenery \u2014 unselectable, unrotatable, unmovable. The player met the game's second mechanic as something they could only look at. Every prism is now inventory. The rule that came out of it: if a level introduces a mechanic, the player must be able to hold that mechanic in their hands.",
+      "gap": "Freeing the prism let it go anywhere, which opened shorter solutions on two boards. Par must equal the true minimum, so THE LONG FALL went 3 to 2 and TERMINUS went 5 to 3. That keeps the game honest but costs the finale its weight, so TERMINUS is queued for a geometry pass with the solver as verifier \u2014 the fix is walls, not a raised par.",
+      "shots": [
+        {
+          "src": "web/r4-level1-prism.jpg",
+          "caption": "Level 1 \u2014 mirror and prism both in the dock"
+        }
+      ]
+    },
+    {
+      "n": 7,
+      "title": "Round 4 \u2014 ownership redrawn",
+      "status": "done",
+      "verdict": "reference",
+      "summary": "Three defects had survived multiple rounds purely because they sat across builders' file boundaries, and every builder kept correctly reporting 'not my file'. So the pieces were redrawn to match the defects: one owner for mobile holding input, hud, css and gl together; the emitter given to whoever owns board.js. It worked immediately. The mobile owner found a torn transform \u2014 board.js asked for the board-to-pixel mapping in drawing-buffer pixels while every threshold inside gl.js is in CSS pixels, so on an iPhone the board art drew at 295.8 px while the beams and hit-testing used 347 px, and the beam visibly left the board. The tracer was pooled behind an opt-in contract with named lanes, cutting allocation from 263 KB to 17 KB per trace.",
+      "gap": "Two agents were handed briefs quoting the previous round's critic, and both had to spend their turn proving the numbers already stale. One of them also caught me out: the p99 latency figure I had written into the brief was measured while fifteen agents were still hammering the machine. At rest it is 0.892 ms and passes. The four agents who had called that signal environmental were closer to right than I was.",
+      "shots": [
+        {
+          "src": "web/r4-mobile.jpg",
+          "caption": "iPhone XR viewport \u2014 torn transform fixed"
+        },
+        {
+          "src": "web/r4-dispersion-final.jpg",
+          "caption": "Pooled tracer, rendering intact"
         }
       ]
     }
