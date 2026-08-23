@@ -219,3 +219,56 @@ beam as "too thin" or "too fat" is measuring in frame pixels without converting 
 board scale: the reference frame is 720 px wide with a 568 px board (0.568 px per unit),
 our captures are 1440 px with a ~1130 px board (1.13 px per unit). Convert before comparing.
 
+
+---
+
+## 11. Round 2 outcome, and the overshoot to fix now
+
+Round 2 closed six well-measured gaps and the build is much stronger: grain is on screen at
+1.05 % RMS against the reference's 0.95, the brick bond is world-space, mirrors have a
+silhouette again, the protractor reads correctly with no ticks, rotation ticks through all
+18 detents with accented magnets and haptics, and the fan is rebuilt on linear spectral
+power so additive blending integrates correctly. The fan is now properly neutral near the
+prism, which was the round-1 complaint.
+
+### 11.1 RECEPTOR GLOW HAS MASSIVELY OVERSHOT — top priority
+
+This is now the worst thing in the game by a wide margin, and it is the same overshoot
+pattern that hit the beam in round 1: a critic correctly said "receptors read as unlit
+icons whose halo dies 8 px out", and the fix went so far the other way that each receptor
+now paints a saturated blob roughly 300 px across. On the SWITCHBACK dispersion capture the
+blue receptor's glow covers something like a quarter of the board and completely obliterates
+the rainbow fan that the level exists to show. Three receptors sitting near each other merge
+into one continuous wash of light.
+
+The rule: a receptor is a small lamp, not a floodlight. It should read as clearly emissive
+and it should tint the board immediately around it — but the fan, the beams, the brick and
+the other receptors must all remain fully legible through it. Concretely, bring the halo
+down until its contribution has fallen below a few percent of peak by roughly one ring
+diameter out, and make sure two adjacent receptors do not merge. Then verify on the
+dispersion capture that the FAN IS THE BRIGHTEST THING IN THAT REGION, because it is the
+subject of the shot.
+
+### 11.2 The lesson, now twice
+
+Both times a critic's gap was real and the fix overshot it. When a critic says "X is too
+small / too dim / too weak", the correct move is to measure the reference's value, move to
+that value, then capture and confirm you landed ON it. Do not move until it "looks
+different". Every builder brief now says this and it still happened, so verify it in review
+rather than trusting the report.
+
+### 11.3 Also outstanding, from the round-2 critics' own next-three lists
+
+- The beam's haze skirt is 4–18x too strong: lateral falloff reads 8.5 / 6.0 / 4.6 % of
+  core at 26 / 30 / 40 px against the reference's 3.2 / 1.3 / 0.25 %. It dissolves the
+  sharp V at every mirror and stops the beam ever reaching black.
+- Per-bounce attenuation is invisible: our generations measure 0.801 / 0.787 / 0.750
+  (−1.7 %, −4.7 %) where the reference shows 0.885 / 0.755 (−14.7 %) for the contract's
+  10 % per bounce. A four-bounce path currently reads uniformly bright and loses all sense
+  of travel.
+- The emitter housing is oversized: 31 x 22 reference px against the measured 17 x 18, fill
+  #605E67 against #4D4B50, and its slit spans 44 px against a beam FWHM of 33 — the
+  reference's slit is exactly the FWHM, so aperture and beam agree.
+- `solver.solve` intermittently returns nothing, which makes `script('folding')` and
+  `script('solved')` occasionally capture an empty board. Two separate agents hit this and
+  lost measurements to it. It needs a real fix, not a retry.
