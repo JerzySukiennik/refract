@@ -17,6 +17,19 @@
   --ink-mute: #2a282c;
 
   --line: #2f2d32;
+  /* The chip row is the QUIETEST chrome in the reference, not the loudest. Measured chip
+     perimeter luminance over five reference frames: RESET 14.8, LEVELS 12.6, SOUND 17.6,
+     with the stroke pixels themselves reading 20-21 (ref_001's top border at x=570 reads
+     3,4,21,20,2,8,7 — antialiased, so the perimeter mean lands below the stroke value).
+     --line rendered crisply at DSF 2 gave a flat 45-46 on every perimeter pixel and a
+     perimeter mean of 43.1 / 34.9 / 34.5, 2.5x the reference and 30 % more ink per chip
+     than the reference spends on the whole chip including its label. The dock tile keeps
+     --line: its perimeter measures 54.9 against a reference 46.9-51.8, i.e. the reference
+     really does draw its dock brighter than its chips. Cool-violet cast preserved (B >= R).
+     #141317 was the first move and measured 18.9 — better, but still above the reference's
+     12.6-17.6 band. #100F11 is --line scaled to 33.9 % of its luminance and measures 14.9,
+     which is the reference's own three-chip mean of 15.0. */
+  --line-chip: #100f11;
   --line-soft: #201c1d;
   --line-dead: #110f13;
   --fill-chip: #0a0810;
@@ -90,6 +103,8 @@
   --tile-h: clamp(45px, calc(var(--board-size) * 0.0792), 74px);
   --radius: 2px;
   --radius-tile: 3px;
+  /* Tallest a centred panel may be and still leave the dock and its badge uncovered. */
+  --panel-max-h: calc(100vh - 2 * (max(var(--inset), env(safe-area-inset-bottom)) + var(--tile-h) + 26px));
 
   /* Motion */
   --t-fast: 110ms;
@@ -309,7 +324,7 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
   text-indent: 0;
   color: var(--ink-mid);
   background: var(--fill-chip);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-chip);
   border-radius: var(--radius);
   /* Hugs the label horizontally, generous vertically: 5 px sides, 3.9 px top and bottom at
      the 6.25 px reference size, landing RESET on 35 x 16 px. The label's widened glyph run
@@ -336,7 +351,7 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
 
 .chip:hover {
   color: var(--ink-title);
-  border-color: #4a474f;
+  border-color: #35323a;
   background: #131019;
 }
 
@@ -354,7 +369,7 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
 /* Pinned hint: brighter ink and a brighter border, no hue. */
 .chip[aria-pressed="true"][data-action="hint"] {
   color: var(--ink-title);
-  border-color: rgba(245, 242, 246, 0.42);
+  border-color: rgba(245, 242, 246, 0.15);
 }
 
 /* The sound chip carries its state in the label — SOUND / MUTED, five glyphs either way —
@@ -362,10 +377,10 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
    only blue in the whole top strip; swapping the word is both narrower and louder. */
 .chip-sound[aria-pressed="false"] {
   color: var(--ink-tag);
-  border-color: var(--line-soft);
+  border-color: #0d0c10;
 }
 
-.chip-sound[aria-pressed="false"]:hover { color: var(--ink-soft); border-color: var(--line); }
+.chip-sound[aria-pressed="false"]:hover { color: var(--ink-soft); border-color: var(--line-chip); }
 
 /* ---------- the strip under the board ---------- */
 
@@ -378,13 +393,23 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
 .board-strip {
   position: absolute;
   left: 50%;
-  bottom: calc(max(var(--inset), env(safe-area-inset-bottom)) + var(--tile-h) + 4px);
+  /* +7 px, not +4: at +4 the readout's cap band ended at y 629.2 and the dock badge disc
+     began at 629.6, leaving 0.4 px of air where the reference leaves 3.5. At +7 the hint
+     band lands on y 617.8-625.7 against the reference's 618-626. */
+  bottom: calc(max(var(--inset), env(safe-area-inset-bottom)) + var(--tile-h) + 7px);
+  transition: opacity var(--t-mid) var(--ease);
   transform: translateX(-50%);
   /* max() floors the width: --board-size is written from the render transform, and a
      degenerate transform must not collapse the strip to nothing. */
   width: min(92vw, max(240px, calc(var(--board-size) * 1.02)));
   text-align: center;
 }
+
+/* The strip sits at z 10, above the dim at z 5, so behind an open panel it stayed fully
+   bright and restated whatever the panel was already saying — the solve capture read
+   SOLVED twice, once in the panel and once under the board. A panel owns the screen while
+   it is up. */
+html[data-modal="open"] .board-strip { opacity: 0; }
 
 .board-strip .is-hidden { display: none; }
 
@@ -614,15 +639,29 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
   padding: clamp(20px, calc(var(--board-size) * 0.050), 42px)
            clamp(18px, calc(var(--board-size) * 0.046), 40px);
   max-width: min(94vw, 640px);
-  max-height: calc(100vh - var(--inset) * 3);
+  /* Two ceilings, whichever is tighter. The second one keeps the panel clear of the dock:
+     #modal-root centres the panel on the viewport, so a panel of height H ends at
+     (100vh + H) / 2, and the dock's badge begins one tile-height plus its overhang above
+     the bottom inset. The levels panel used to run 614 x 598 in a 720 x 694 frame and put
+     its bottom edge at y 646, slicing 12 px off a 45 px dock tile and burying the badge
+     entirely. */
+  max-height: min(calc(100vh - var(--inset) * 3), var(--panel-max-h));
   overflow: auto;
   text-align: center;
-  animation: panel-in var(--t-slow) var(--ease-back) both;
+  /* --ease, not --ease-back: the overshoot is now an explicit keyframe, so a back-out
+     timing function on top of it would push the peak past the measured value. */
+  animation: panel-in var(--t-slow) var(--ease) both;
 }
 
+/* REFERENCE 9.2: the panel is measured at 281 px wide on the frame it appears (f128),
+   settling to 250 — a 1.124x overshoot — and REFERENCE.md itself asks for "an explicit
+   spring reaching 1.12x at ~40 % of the way through". scale(0.9) -> scale(1) on
+   cubic-bezier(0.34, 1.56, 0.64, 1) peaks at an output of 1.098, i.e. a scale of 1.0098:
+   a 1 % bump where the reference has 12 %, which is invisible. */
 @keyframes panel-in {
-  from { opacity: 0; transform: scale(0.9); }
-  to   { opacity: 1; transform: scale(1); }
+  0%   { opacity: 0; transform: scale(0.9); }
+  40%  { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
 }
 
 #modal-root.is-closing .panel { animation: panel-out 160ms var(--ease) both; }
@@ -631,7 +670,28 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
 @keyframes panel-out { to { opacity: 0; transform: scale(0.97); } }
 @keyframes scrim-out { to { opacity: 0; } }
 
-.panel-solved { min-width: min(84vw, 304px); }
+/* REFERENCE 9.3 measures the reference panel at 254 x 134 with a cadence of
+   32 (top pad to SOLVED cap top) / 20 (SOLVED baseline to subtitle cap top) /
+   14 (subtitle to button top) / 23 (button bottom to panel bottom), and its content is
+   exactly three centred items: the word, ONE score line, the actions.
+   Ours measured 304 x 167 on 30.5 / 20.5 / 3.5 / 32.5 / 29.5 — a second score line jammed
+   3.5 px under the first, then a 32.5 px void before the buttons. The second line is now
+   folded into the first, which removes the cramped pair outright, and the two remaining
+   gaps are set to the measured targets. The two actions stay: ORCHESTRATOR-NOTES 5 lists
+   the reference's single FREE PLAY button as one of the places to beat it. */
+.panel-solved {
+  min-width: min(84vw, 254px);
+  padding-top: clamp(19px, calc(var(--board-size) * 0.0482), 40px);
+  padding-bottom: clamp(16px, calc(var(--board-size) * 0.0389), 32px);
+}
+
+.panel-solved .panel-actions {
+  margin-top: clamp(6px, calc(var(--board-size) * 0.0154), 14px);
+}
+
+/* 1.2367em at the pre-widening size: measured, the previous 1.0189em put the subtitle's cap
+   top 18 px under the SOLVED baseline against the reference's 20. */
+.panel-solved .panel-sub { margin-top: 1.2367em; }
 
 .panel-word {
   margin: 0;
@@ -683,7 +743,7 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
      generous padding (12 px sides, 5.9 px top and bottom). */
   padding: 0.94em 2.12em;
   border-radius: var(--radius);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   background: transparent;
   color: var(--ink-mid);
   line-height: 1;
@@ -718,7 +778,7 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
 }
 
 .btn:disabled { opacity: 0.35; }
-.btn:disabled:hover { color: var(--ink-mid); border-color: var(--line); background: transparent; }
+.btn:disabled:hover { color: var(--ink-mid); border-color: var(--line-soft); background: transparent; }
 
 /* The only heading a panel gets, so it has to clear the panel fill: --ink-dim on
    --fill-panel is 3.4:1, where the old --ink-tag was 2.4:1. */
@@ -734,11 +794,19 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
 
 /* levels grid */
 
+/* Sized so 24 cells land in a 4 x 6 block that fits inside --panel-max-h with room to
+   spare, instead of the 614 x 598 slab that used to cover the dock. */
+.panel-levels {
+  max-width: min(90vw, 470px);
+  padding: clamp(14px, calc(var(--board-size) * 0.0301), 26px)
+           clamp(14px, calc(var(--board-size) * 0.0301), 26px);
+}
+
 .level-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-  gap: 6px;
-  width: min(86vw, 560px);
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 5px;
+  width: min(76vw, 404px);
   text-align: left;
 }
 
@@ -747,9 +815,9 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
   font: inherit;
   display: flex;
   flex-direction: column;
-  gap: 0.5em;
-  padding: 0.75em 0.7em;
-  min-height: 74px;
+  gap: 0.26em;
+  padding: 0.52em 0.6em;
+  min-height: 50px;
   background: var(--fill-tile);
   border: 1px solid var(--line-dead);
   border-radius: var(--radius-tile);
@@ -981,7 +1049,7 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
   .hud-top { grid-template-columns: 1fr; }
   .chip-row { justify-content: flex-start; }
   .level-name .gw { letter-spacing: -0.0019em; }   /* effective 0.16em */
-  .level-grid { grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); width: min(90vw, 560px); }
+  .level-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); width: min(90vw, 404px); }
   .panel { padding: 24px 18px; }
   /* Narrow frames: tighten tracking so the strip still fits under the board. */
   .readout { letter-spacing: -0.0019em; text-indent: -0.0019em; }

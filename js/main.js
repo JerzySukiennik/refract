@@ -51,6 +51,9 @@ const BURST_LIFE = 0.4;
 const BURST_RADIUS = 180;
 const RECEPTOR_FADE_DELAY = 0.25;
 const BEAM_ENERGY_FULL = 2200;
+// A lone emitter stub is ~200 units of the 2200 that saturate the hum, so anything under
+// half a stub is "the light is out" rather than "the light is short".
+const BEAM_ON_THRESHOLD = 0.045;
 
 function pick(mod, ...names) {
   for (const n of names) {
@@ -225,6 +228,9 @@ function boot() {
   const audioSolve = pick(audio, 'solve');
   const audioChime = pick(audio, 'receptorChime');
   const audioEnergy = pick(audio, 'setBeamEnergy');
+  // The haptic channel is deliberately not routed through audioEnable: a phone on silent is
+  // exactly the case that has nothing else left. See js/audio.js.
+  const buzz = pick(audio, 'haptic') || (() => {});
   // state.sound is "sound is ON"; the audio module takes "is MUTED". Passing the flag
   // straight through inverted it and silenced the whole engine until the state sync
   // happened to correct it a tick later.
@@ -251,6 +257,8 @@ function boot() {
   }
 
   let lastLit = new Set();
+  let beamWasOn = null;
+  let lastRoster = -1;
 
   // The hum module was written to swell with the beam but nothing ever fed it, so it sat
   // pinned at its 0.0001 floor. Energy is the intensity-weighted path length: a lone
@@ -266,7 +274,17 @@ function boot() {
     const recs = (trace && trace.receptors) || [];
     let lit = 0;
     for (const r of recs) if (r.satisfied) lit += 1;
-    call(audioEnergy, Math.min(1, weighted / BEAM_ENERGY_FULL), lit);
+    const energy = Math.min(1, weighted / BEAM_ENERGY_FULL);
+    call(audioEnergy, energy, lit);
+    // beam_off.ogg had no caller at all. A board whose beam is smothered — a mirror turned
+    // straight back into the emitter, a prism dropped across the aperture — is the moment it
+    // belongs to. `null` means "first trace after a level change", where neither cue fires.
+    const lightIsOn = energy > BEAM_ON_THRESHOLD;
+    if (beamWasOn === null) beamWasOn = lightIsOn;
+    else if (lightIsOn !== beamWasOn) {
+      beamWasOn = lightIsOn;
+      call(audioPlay, lightIsOn ? 'beam_on' : 'beam_off');
+    }
   }
 
   // A receptor lighting on its own earns its own bell; a receptor lighting as the last
@@ -281,6 +299,7 @@ function boot() {
         if (!lastLit.has(r.id) && !(trace && trace.solved)) {
           const def = ((state.level && state.level.receptors) || []).find((d) => d.color === r.color);
           call(audioChime, index, { panX: def ? def.x : 500 });
+          buzz('receptor');
         }
       }
       index += 1;
@@ -288,30 +307,50 @@ function boot() {
     lastLit = now_;
   }
 
+  /* Every one of these buzz() calls answers a gap the round-3 mobile sweep measured: 18
+     navigator.vibrate calls in a whole session, all of them rotation detents. A rejected
+     placement was the worst of them — it plays error.ogg and swaps the hint, so a phone on
+     silent got nothing at all for the one action the player most needs told about. */
   on('optic:add', (o) => {
     opticEntry(o.id);
     // Glass and metal do not land the same way: a prism gets the glass samples.
     call(audioPlay, o.type === 'prism' ? 'place_prism' : 'place', { panX: o.x });
+    buzz('place');
     broadcast({ type: 'add', optic: { ...o } });
   });
   on('optic:remove', (o) => {
     call(audioPlay, 'remove', { panX: o.x });
+    buzz('remove');
     broadcast({ type: 'remove', id: o.id });
   });
   on('optic:move', (o) => broadcast({ type: 'update', optic: { ...o } }));
   on('optic:rotate', (o) => broadcast({ type: 'update', optic: { ...o } }));
   on('drag:start', (d) => {
-    if (d && d.kind === 'move') call(audioPlay, 'pick', { panX: d.x });
+    if (d && d.kind === 'move') {
+      call(audioPlay, 'pick', { panX: d.x });
+      buzz('pick');
+    }
   });
   on('select', (id) => {
     if (id) call(audioPlay, 'ui_select');
   });
-  on('invalid', () => call(audioPlay, 'error'));
-  on('undo', () => call(audioPlay, 'undo'));
-  on('redo', () => call(audioPlay, 'undo', { rate: 1.09 }));
+  on('invalid', () => {
+    call(audioPlay, 'error');
+    buzz('reject');
+  });
+  on('undo', () => {
+    call(audioPlay, 'undo');
+    buzz('undo');
+  });
+  on('redo', () => {
+    call(audioPlay, 'undo', { rate: 1.09 });
+    buzz('undo');
+  });
   on('reset', () => {
     lastLit = new Set();
+    beamWasOn = null;
     call(audioPlay, 'reset');
+    buzz('reset');
   });
   on('sound', (v) => {
     call(audioEnable, v);
@@ -323,6 +362,7 @@ function boot() {
   });
   on('level', () => {
     lastLit = new Set();
+    beamWasOn = null;
     call(audioPlay, 'level_start');
     call(audioPlay, 'beam_on', { delay: 0.14 });
     opticAnim.clear();
@@ -336,6 +376,7 @@ function boot() {
     // The full six-note chord, its sparkle tail and the swell sample — not the single
     // short receptor blip the payoff used to get.
     call(audioSolve);
+    buzz('solve');
     spawnBurst();
     // The capture harness composes solved boards deliberately and needs to photograph the
     // lit board itself; it asks for the panel explicitly via REFRACT.showModal('solved').
@@ -355,6 +396,11 @@ function boot() {
   on('level:request', (index) => setLevel(index));
   on('net:op', (op) => applyRemote(op));
   on('net:players', (players) => {
+    // player_join.ogg was another sample nothing could ever reach. The first roster sync is
+    // the room as it already was, so only growth after that counts as somebody arriving.
+    const n = players ? Object.keys(players).length : 0;
+    if (lastRoster >= 0 && n > lastRoster) call(audioPlay, 'player_join');
+    lastRoster = n;
     setPlayers(players);
     call(setRemoteCursors, players);
   });

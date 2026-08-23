@@ -258,7 +258,13 @@ function contextualHint() {
   if (armedType) {
     return { text: 'TAP THE BOARD TO PLACE THE ' + (LABELS[armedType] || armedType) + ' · TAP THE TILE TO CANCEL', tone: 'pinned' };
   }
-  if (state.solved) return { text: 'SOLVED · NEXT LEVEL OR KEEP PLAYING', tone: 'pinned' };
+  /* Solved: the strip hands itself to USED / PAR. It used to read
+     'SOLVED · NEXT LEVEL OR KEEP PLAYING', which is word for word what the solve panel
+     directly above it already says, so the frame carried the same sentence twice; and once
+     the panel is dismissed for free play that line keeps repeating an instruction the
+     player has already acted on. The score is the one thing neither the panel nor the
+     board is showing at that point. */
+  if (state.solved) return { text: '', tone: '', ambient: true };
   if (drag) {
     const invalid = typeof drag === 'object' && drag.valid === false;
     if (invalid) return { text: 'NO ROOM HERE · RELEASE OVER OPEN FLOOR', tone: 'alert' };

@@ -22,8 +22,23 @@ const HANDLE_R = 8.35;
 // hairline ring read as passing *behind* the handle instead of through it, so it is drawn as
 // a real occluder rather than as a multiply on an additive pass.
 const HANDLE_COLLAR = 2.6;
-const READOUT_CAP = 6.0;
-const READOUT_GAP = 8.0;
+// REFERENCE.md 6.3 measures the readout's cap at ~5 px in a 720 px frame. Our board is 1000
+// units across a 568 px board in that frame, i.e. 0.568 px per unit, so 5 px is ~8.8 u. At
+// the old 6.0 u the string rasterised with a 3.4 px cap and the +0.35 em tracking blew it
+// apart into scattered dots.
+//
+// READOUT_GAP is the distance from the ring's top to the CENTRE of the string, not to its
+// bottom: on ref_010 the glyph band runs y 230-234 against a ring centre at 277 and a radius
+// of 38, so the string is centred 7.5 px above the ring's top, which is 13.5 u.
+//
+// READOUT_TRACK is where the reference and its own summary table part company. The table
+// claims +0.35 em, but both frames that actually contain a readout put the glyph advance at
+// 3.0-3.4 px against a 3 px glyph: ref_010's "20.0" spans x 138-154 (17 px for five glyphs)
+// and ref_030's "277.1" spans x 600-617 (18 px for six). Share Tech Mono's own 0.5 em advance
+// already fills that, so the tracking measured on the HUD's button labels does not apply here.
+const READOUT_CAP = 8.6;
+const READOUT_GAP = 13.5;
+const READOUT_TRACK = 0.06;
 
 const RECEPTOR_R = 29;
 const RECEPTOR_STROKE = 7.9;
@@ -42,15 +57,19 @@ const POLE_W = 5.3;
 const FLAG_W = 57.0;
 const FLAG_H = 27.0;
 
-// REFERENCE.md 4.4: a machined grey housing box with a slit at its mouth that is brighter
-// than the beam it feeds. The reference's block is 30 u long, but our beam's start cap is
-// round and reaches back past the emitter origin, so a 30 u block would sit entirely inside
-// the cap and never be seen — hence the housing is grown backwards until it buries itself
-// in the wall behind it, which is also how the reference's reads: a fixture, not a highlight.
-const EMITTER_W = 52;
-const EMITTER_MIN_LEN = 78;
-const EMITTER_MAX_LEN = 150;
-const EMITTER_BURY = 14;
+// REFERENCE.md 4.4 and 1.3: a small machined grey housing box with a slit at its mouth that
+// is brighter than the beam it feeds. Measured directly off ref_001.jpg (the plateau at
+// x 122-140, y 126-144, where the fill holds 76-90 before the beam glow takes over) the
+// reference's block is 18 x 19 frame px at 0.568 px/u — about 32 u long by 33 u across.
+// Growing it backwards until it buried itself in the wall turned it into a 29 x 41 px
+// chimney, taller than the reference's whole housing is wide; it is a free-standing fixture
+// floating clear of the brick, so it no longer reaches for a wall to bolt itself to.
+// The slit is left alone: at 58 u it spans the beam's FWHM, exactly as the reference's
+// does, which means it legitimately stands proud of the box on both sides.
+const EMITTER_W = 35;
+const EMITTER_MIN_LEN = 35;
+const EMITTER_MAX_LEN = 40;
+const EMITTER_BURY = 4;
 const SLIT_SPAN = 29;
 
 const MAX_LIGHTS = 16;
@@ -99,8 +118,14 @@ const BRICK_DARK = scene('#673D36');
 const BRICK_RIM = scene('#785854');
 const MORTAR = scene('#A47E76');
 
-const HOUSING = scene('#5C5A64');
-const HOUSING_EDGE = scene('#B6B4BE');
+// Round 3 measured the rendered housing at (106, 105, 116): 1.35x the reference's
+// (91, 89, 92) and carrying a +10 blue cast it should not have. The token in REFERENCE.md
+// is #4D4B50; authored well under that because most of what the box displays is not its own
+// material — it is the slit's bloom falling on it, and the smaller the box gets the larger
+// that share becomes. Darkening #5C5A64 to #4F4C4F made the measured fill go UP, from 92 to
+// 130, purely because the box shrank into the spill. The cast is removed here too.
+const HOUSING = scene('#3E3C40');
+const HOUSING_EDGE = scene('#8A8890');
 const SLIT = scene('#E0DEE1', 3.0);
 
 const MIRROR_BODY = scene('#8F9AA6', 0.85);
@@ -109,8 +134,17 @@ const MIRROR_SPEC = scene('#FFFFFF', 0.17);
 const MIRROR_GLOW = scene('#C4CEDA', 0.30);
 const GLASS_EDGE = scene('#B9C4CE', 1.15);
 
-const PROTRACTOR = scene('#8A7A78');
-const READOUT = scene('#9A9298');
+// REFERENCE.md 6.3 gives the ring as "peak ~#8A7A78" at "opacity ~0.30", and the opacity was
+// never applied — the ring was authored as if it were an opaque hairline, which put its peak
+// at 153/255 on black against a reference that peaks at 34-41. It is UI chrome annotating an
+// optic, so it must sit well under the optic's own body (peak 178), not beside it.
+//
+// 0.30 is a display-space alpha and this pass is scene radiance through an ACES curve, so the
+// gain is not 0.30. Solving ACES for a 38/255 display peak gives 0.0297 scene units at the
+// grabbed ring's 1.30x, i.e. 0.0228 base against the 0.1725 the bare colour carries: gain
+// 0.132. Same treatment for the readout, measured at 64/255 on ref_010 against our 150.
+const PROTRACTOR = scene('#8A7A78', 0.132);
+const READOUT = scene('#9A9298', 0.255);
 
 // A matte disc, not a lamp. scene('#F8F8F8') would be ~2.5 scene units, which is 3.5x over
 // the bloom prefilter threshold (0.72) and blows a 16 px halo that erases the ring and the
@@ -275,18 +309,30 @@ void main() {
   float fu = bu - bIdx * ${BRICK_LEN.toFixed(2)};
   float fv = v - course * ${COURSE_H.toFixed(2)};
 
-  // The slab is a rounded extrusion: brightest close to either face, dimmest in the belly.
-  // Measured on ref_001.jpg, rows 58-72 of the top band: 133 at the faces, 118 mid-slab.
-  float belly = 1.0 - abs(t - 0.5) * 2.0;
-  vec3 col = mix(uLight, uMid, smoothstep(0.05, 0.62, belly) * 0.75);
-  col = mix(col, uDark, smoothstep(0.5, 1.0, belly) * 0.22);
-  col = mix(col, uRim, smoothstep(0.20, 0.0, belly) * 0.25);
+  // Every slab on the board is lit from the SAME top-left key, so the shading across its
+  // thickness is directional, never symmetric. t is 0 at the lit face (-Y on a horizontal
+  // run, -X on a vertical one) and 1 at the far face.
+  //
+  // The old profile was a rounded extrusion — brightest at BOTH faces, dimmest in the
+  // belly — which put the brightest row on the far edge of every interior slab and drew a
+  // pale stroke all the way round it. Measured on ref_001.jpg, column-averaged across the
+  // interior ledge at y 190-226 and the top band at y 52-80, the reference runs:
+  //   lit face 112-115  ->  belly 88-95  ->  far-edge rim 102-105
+  // i.e. lit/mid 1.27 and rim/mid 1.15 with the maximum ON the lit face, a range of about
+  // 24 luminance levels. Authored here slightly wider than that because the tonemap
+  // compresses it on the way out.
+  float ramp = smoothstep(0.0, 0.78, t);
+  vec3 col = mix(uLight, uMid, min(ramp * 1.45, 1.0));
+  col = mix(col, uDark, smoothstep(0.42, 0.92, t) * 0.55);
+  col = mix(col, uRim, smoothstep(0.84, 1.0, t) * 0.85);
 
-  // Per-brick tone. Measured on ref_001.jpg the reference's top band runs std/mean 0.089
-  // across the whole band; a +/-13 % walk here alone overshot that, so the walk is halved.
+  // Per-brick tone. Measured brick-face to brick-face on a beam-free band, ref_001.jpg runs
+  // a std of 6.8-7.6 % of the mean with peaks +/-13 %; ours ran 1.3-3.8 % and +/-2-6 %, so
+  // the wall was too UNIFORM, not too busy. See the long note in textures.js: the round-3
+  // report that called this 1.7x over sampled straight through the beam's bloom gradient.
   float r1 = hash21(vec2(bIdx, course) + 0.13);
   float r2 = hash21(vec2(bIdx, course) * 1.71 + 5.37);
-  col *= 0.9095 + 0.170 * r1;
+  col *= 0.80 + 0.40 * r1;
   col.r *= 1.0 + (r2 - 0.5) * 0.055;
   col.b *= 1.0 - (r2 - 0.5) * 0.065;
 
@@ -307,23 +353,38 @@ void main() {
   float je = min(jx, jy * 1.08);
   float joint = 1.0 - smoothstep(0.0, ${JOINT_W.toFixed(2)}, je);
   vec3 mortar = mix(uMortar, col * 1.05, 0.44);
-  col = mix(col, mortar, joint * 0.70);
-  col *= 1.0 - 0.06 * (1.0 - smoothstep(0.0, ${(JOINT_W * 0.40).toFixed(2)}, je));
+  // Head joints, measured as the local maximum at a joint over the median of the two brick
+  // faces either side, on a beam-free course band: ref_001.jpg gives +10 % and +5 %, ours
+  // gave +11 % and +22 %. Roughly 2x over, so the tile's share drops 0.55 -> 0.22 and this
+  // one 0.70 -> 0.28, which lands the pair at +5 % and +8 %.
+  col = mix(col, mortar, joint * 0.28);
+  col *= 1.0 - 0.05 * (1.0 - smoothstep(0.0, ${(JOINT_W * 0.40).toFixed(2)}, je));
 
   vec3 albedo = col;
 
-  // Open faces: darken through the last few units of brick. The reference spends 128 -> 113
-  // -> 42 -> 16 -> 6 across the inner course and only then reaches the floor.
+  // Edge treatment is ASYMMETRIC, because the key light is. Measured on ref_001.jpg the
+  // interior ledge's far edge falls 105 -> 82 -> 44 -> 25 -> 14 -> 4 in six px — a hard
+  // #1B0C0B drop — while its lit edge climbs 48 -> 89 -> 115 and is the brightest row in
+  // the slab. Darkening all four sides equally, as this used to, is what ringed every
+  // interior slab in a symmetric skirt.
   vec4 open = clamp(1.0 - abs(uFace - 1.0), 0.0, 1.0);
   vec4 outer = clamp(uFace - 1.0, 0.0, 1.0);
-  vec4 ramp = smoothstep(vec4(6.5), vec4(0.0), dist);
-  float darkK = max(max(ramp.x * open.x, ramp.y * open.y), max(ramp.z * open.z, ramp.w * open.w));
-  col *= 1.0 - 0.36 * darkK * darkK;
+  vec4 farR = smoothstep(vec4(5.5), vec4(0.0), dist);
+  vec4 litR = smoothstep(vec4(2.0), vec4(0.0), dist);
+  // (-X, +X, -Y, +Y): x and z look back toward the key, y and w away from it.
+  float darkK = max(farR.y * max(open.y, outer.y * 0.55), farR.w * max(open.w, outer.w * 0.55));
+  col *= 1.0 - 0.75 * darkK * darkK;
+  float softK = max(litR.x * max(open.x, outer.x), litR.z * max(open.z, outer.z));
+  col *= 1.0 - 0.12 * softK * softK;
 
-  // Outer faces get the lit lip the reference shows on the board's outside edge.
+  // The board's outside boundary keeps a whisper of the lit lip, on the two faces that turn
+  // toward the key light. It used to be +36 %, which on top of the directional gradient put
+  // the border wall's lit/belly ratio at 1.52 against the interior slab's 1.30 — the very
+  // inconsistency inside one screenshot that the round-3 critic named. ref_001.jpg has the
+  // two within two points of each other (border 1.23, ledge 1.25).
   vec4 lipR = smoothstep(vec4(5.0), vec4(0.4), dist);
-  float lipK = max(max(lipR.x * outer.x, lipR.y * outer.y), max(lipR.z * outer.z, lipR.w * outer.w));
-  col *= 1.0 + 0.36 * lipK;
+  float lipK = max(lipR.x * outer.x, lipR.z * outer.z);
+  col *= 1.0 + 0.10 * lipK;
 
   float mit = max(max(uMitre.x * cornerSeam(dist.x, dist.z), uMitre.y * cornerSeam(dist.y, dist.z)),
                   max(uMitre.z * cornerSeam(dist.x, dist.w), uMitre.w * cornerSeam(dist.y, dist.w)));
@@ -337,16 +398,19 @@ void main() {
 
   // Contact bleed: brick this warm does not stop dead at its own edge. Only open faces
   // spill, so the outer boundary of the board stays a hard edge.
-  float sideX = mix(open.x, open.y, step(0.0, vLocal.x));
-  float sideY = mix(open.z, open.w, step(0.0, vLocal.y));
-  float openOut = clamp(step(0.001, q.x) * sideX + step(0.001, q.y) * sideY, 0.0, 1.0);
+  // The lit faces spill a little; the shadowed ones spill less, and neither reaches far.
+  // Measured on ref_001.jpg the first floor pixel past a wall reads 57 % of the brick face
+  // and is down to 2 within six px. Ours used to carry a 0.16-weight lobe with a 10 u
+  // length constant on all four sides, which is the 7 px (1x) symmetric skirt the round-3
+  // critic measured — a glow outline where the reference has a contact shadow.
+  float sideX = mix(open.x * 0.46, open.y * 0.28, step(0.0, vLocal.x));
+  float sideY = mix(open.z * 0.46, open.w * 0.28, step(0.0, vLocal.y));
+  // max, not sum: adding the two sides put the corners of every slab at 1.28x the brick face
+  // and left four bright pips around each one.
+  float openOut = max(step(0.001, q.x) * sideX, step(0.001, q.y) * sideY);
   float outd = max(sd, 0.0);
-  // Measured on ref_001.jpg: the first floor pixel past the wall reads 57 % of the brick
-  // face, then decays to 1 over about 8 css px. Keying it off the LIT face rather than the
-  // raw albedo keeps it below the brick at every brightness, so a wall standing in a beam
-  // never grows a glowing outline around a black border.
-  vec3 warm = albedo * (1.0 + 0.85 * lit) + lit * 0.06;
-  vec3 bleed = warm * openOut * (0.52 * exp(-outd / 3.6) + 0.16 * exp(-outd / 10.0)) * (1.0 - body);
+  vec3 warm = albedo * (1.0 + 0.60 * lit) + lit * 0.04;
+  vec3 bleed = warm * openOut * (1.0 * exp(-outd / 2.0) + 0.24 * exp(-outd / 5.0)) * (1.0 - body);
 
   fragColor = vec4(col * body + bleed, body);
 }`;
@@ -405,7 +469,7 @@ void main() {
   float d = sdSeg(vLocal, vec2(-uSpan.x, -uSpan.y), vec2(uSpan.x, uSpan.y));
   float core = clamp(1.0 - d / uWidth, 0.0, 1.0);
   float body = pow(core, 0.55);
-  float halo = exp(-d / (uWidth * 2.0)) * 0.22;
+  float halo = exp(-d / (uWidth * 2.0)) * 0.14;
   fragColor = vec4(uColor * (body + halo) * window(), 0.0);
 }`;
 
@@ -433,6 +497,10 @@ void main() {
   // and get DARKER toward the middle, which is the whole reason it looked like an icon.
   float ri = clamp(d / max(uRadius, 1e-3), 0.0, 1.0);
   float discCut = 1.0 - smoothstep(uRadius - uStroke * 0.30, uRadius + uStroke * 0.70, d);
+  // The interior disc carries an extra unlit pullback on top of uRest below, so that the
+  // two together come to 0.52x. Round 3 measured the disc at 88 against the reference's 46,
+  // which spent 45 % of the 'interior fills when lit' cue before the beam ever arrived;
+  // 0.52x puts the resting interior back at 31 % of the resting stroke.
   float disc = mix(0.32, 0.52, pow(ri, 1.4)) * discCut * mix(1.0, 1.30, uLit);
 
   // Outer pool. Refitted against the reference's own radial profile, measured on ref_001.jpg
@@ -465,7 +533,26 @@ void main() {
   pool *= smoothstep(0.0, ${(WALL_T * 0.92).toFixed(1)}, min(ob.x, ob.y));
 
   vec3 tint = mix(uRing, vec3(dot(uRing, vec3(0.30, 0.59, 0.11))), 0.30 * uLit);
-  vec3 col = uRing * (core + glow) * amp + tint * (disc + pool) * amp;
+  // Apples-to-apples on the green ring, authored #6EAF74 and unlit in both builds, round 3
+  // measured our stroke peak at 194.8 luminance / (155, 210, 162) / saturation 0.26 against
+  // the reference's 150.1 / (98, 170, 107) / 0.42. The ring was not the wrong hue, it was
+  // overexposed and clipping toward white, which is why the cyan and blue rings read as one
+  // colour. The LIT state measured correctly, so only the resting state is pulled back — and
+  // the interior disc is pulled back with it, which lands the resting interior on the
+  // reference's 73.7 luminance almost exactly.
+  //
+  // The factor is 0.62, not the 0.77 the round-3 report asked for, because the stroke is
+  // CLIPPED: core + glow comes to 1.38 before bloom, so scaling scene radiance by 0.77 moved
+  // the displayed peak by only 5 % (216 -> 206). 0.62 is what actually lands it on the
+  // reference's 151, measured the same way on both frames.
+  float rest = mix(0.62, 1.0, uLit);
+  // The floor pool is deliberately OUTSIDE the pullback. Measured on ref_001.jpg's green
+  // receptor, left sector only (the pole and the neighbouring rings contaminate every other
+  // direction), the reference's floor reads 49 % and 30 % of the ring peak at 1.35 R and
+  // 1.7 R; ours read 36 % and 19 % before this change, i.e. already under. Scaling the pool
+  // down with the stroke would have taken it to 28 % and 14 % — dimming a halo that was not
+  // the thing measured as too bright.
+  vec3 col = (uRing * (core + glow) + tint * disc) * amp * rest + tint * pool * amp;
   fragColor = vec4(col * window(), 0.0);
 }`;
 
@@ -880,7 +967,7 @@ export function createBoardRenderer(gl) {
     if (key === textCache) return;
     textCache = key;
     const fontPx = capPx / 0.72;
-    const track = fontPx * 0.35;
+    const track = fontPx * READOUT_TRACK;
     const font = fontPx.toFixed(2) + 'px "Share Tech Mono", "SFMono-Regular", Consolas, monospace';
     tctx.font = font;
     if ('letterSpacing' in tctx) tctx.letterSpacing = track.toFixed(2) + 'px';
@@ -1258,10 +1345,13 @@ export function createBoardRenderer(gl) {
     // instead of on bare black. Drawn first: the box is opaque and covers its middle.
     const ug = use(progs.glow);
     gl.uniform2f(ug.uSpan, ca * len * 0.34, sa * len * 0.34);
-    gl.uniform1f(ug.uRadius, 74);
+    gl.uniform1f(ug.uRadius, 32);
     gl.uniform1f(ug.uPower, 2.4);
-    gl.uniform3f(ug.uColor, SLIT[0] * 0.070, SLIT[1] * 0.072, SLIT[2] * 0.080);
-    place(ug, e.x - ca * len * 0.34, e.y - sa * len * 0.34, len * 0.34 + 76, len * 0.34 + 76, 0);
+    // The pool was sized for a 78 u chimney. Against a 35 u block it was washing the whole
+    // housing: the box's measured fill came out BRIGHTER after the fill colour was darkened,
+    // because every part of it now sits inside this spill rather than material.
+    gl.uniform3f(ug.uColor, SLIT[0] * 0.038, SLIT[1] * 0.039, SLIT[2] * 0.044);
+    place(ug, e.x - ca * len * 0.34, e.y - sa * len * 0.34, len * 0.34 + 34, len * 0.34 + 34, 0);
     drawQuad();
 
     const ub = use(progs.box);
@@ -1429,8 +1519,9 @@ export function createBoardRenderer(gl) {
       gl.uniform2f(ut.uSize, textHalfW * 2, textHalfH * 2);
       gl.uniform3fv(ut.uColor, READOUT);
       gl.uniform1f(ut.uAlpha, Math.min((scaleK - 0.88) / 0.12, 1));
-      // Centred on the ring's centre, READOUT_GAP above the ring — not beside the handle.
-      place(ut, o.x, o.y - R - READOUT_GAP - textHalfH, textHalfW, textHalfH, 0);
+      // Centred on the ring's centre, its own centre READOUT_GAP above the ring's top — not
+      // beside the handle, and not resting on the ring.
+      place(ut, o.x, o.y - R - READOUT_GAP * scaleK, textHalfW, textHalfH, 0);
       drawQuad();
     }
   }

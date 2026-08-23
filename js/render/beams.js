@@ -49,6 +49,17 @@ const DEFAULTS = {
   // clipped pixel has no hue left, which is most of why the far half of the wedge read as
   // a white-blue disc instead of a spectrum. At 0.095 the fan peaks at 0.46-0.49 of the
   // white core measured on a clean single-pass fan, inside 5.3's recommended 0.45-0.50.
+  //
+  // Round 3 narrowed the fan hard (see spectralHalfWidth and spectrum.js SOURCE_*) and the
+  // obvious worry was that concentrating the same flux into two thirds of the arc would
+  // push the peak through the clip point. It does not, because the source envelope removes
+  // wing flux at the same time as the profile concentrates the middle: measured on the
+  // clean rig, peak value at R = 45/60/80/100/120/140/180 went 0.390/0.394/0.411/0.407/
+  // 0.420/0.435/0.442 before to 0.389/0.408/0.409/0.409/0.428/0.443/0.441 after -- flat,
+  // and inside REFERENCE.md 5.3's measured 0.42-0.45, so this number stays. It must not be
+  // raised to chase the brightness of a fan that is dim because its beam has already been
+  // through three mirrors -- that dimming is the contract's 10 % per bounce, not a gain
+  // error, and 0.46 is the clip line.
   spectralGain: 0.095,
   // A dispersed ray is the same beam, only narrower in wavelength: it keeps the width of
   // the beam that entered the glass. Anything thinner stops neighbouring wavelengths
@@ -63,7 +74,17 @@ const DEFAULTS = {
   // leaves the prism neutral, measured sat 0.07-0.14 in its core at R = 45-80 against
   // REFERENCE.md 5.2's #606467 / #66686B -- while the 10 % radius comes in much harder,
   // from 29.5 px to 22.0, which is what narrows the visible wedge.
-  spectralHalfWidth: BEAM_HALF_WIDTH * 1.23,
+  //
+  // Round 3 takes it one step further, 1.23 -> 1.05, with the exponent 2.60 -> 3.20. That
+  // puts the 10 % radius at 17.3 reference px and the half-max at 11.9. The 17.3 is not a
+  // taste call: solving the reference's own measured widths -- 24.5 deg at R = 120, 22.0
+  // at 140, 19.2 at 180 -- for the two terms of (angular dispersion) + 2*(splat radius)/R
+  // gives a splat 10 % radius of 16.5 reference px and 8.5 deg of dispersion under it. The
+  // narrower splat did not cost the neutral wedge REFERENCE.md 5.2 wants -- it improved it.
+  // Sampling the fan's own centreline on the clean rig, R = 45/60/80 read #565D5B / #505A57
+  // / #455951 at saturation 0.075 / 0.111 / 0.225 before, and #61615F / #646865 / #5E6563 at
+  // 0.021 / 0.038 / 0.069 after, against 5.2's measured #606467 and #66686B at sat < 0.10.
+  spectralHalfWidth: BEAM_HALF_WIDTH * 1.05,
   spectralGrow: 0.012,
   spectralCompRef: 620.0,
   spectralCompMax: 1.35,
@@ -114,14 +135,17 @@ const DEFAULTS = {
   // 40 px, where sRGB's steep toe otherwise magnifies a thousandth of a nit into 4/255.
   //
   // Re-measured on the composited PNG rather than argued about, sampling a clean 400 px
-  // stretch of the fresh board's emitter run and the same three offsets on ref_001:
-  // ours 1.5 % / 0.57 % / 0.18 % against the reference's 3.2 % / 0.50 % / 0.21 % at
-  // 26 / 30 / 40 reference px. 30 and 40 px sit on the reference, the beam reaches black,
-  // and the V at a mirror has its apex back. The only remaining gap is AT 26 px, which is
-  // exactly where coreProfile's support ends, so that one is the profile's edge and not the
-  // haze -- and ORCHESTRATOR-NOTES 10.3 forbids chasing width to close it. Leave this alone.
-  haloGain: 0.055,
-  haloWidth: 0.65,
+  // stretch of the fresh board's emitter run and the same three offsets on ref_001, the
+  // 0.055 / 0.65 lobe read 1.5 % / 0.57 % / 0.18 % against the reference's 3.2 % / 0.50 % /
+  // 0.21 % at 26 / 30 / 40 reference px. The note that stood here blamed the 26 px gap on
+  // coreProfile's compact support and told the next builder to leave both alone. The first
+  // half was right and the second half was wrong: the support WAS the problem, and the
+  // profile has now been refitted with a real tail (see coreProfile), which is what closes
+  // 26 px. This lobe is refitted jointly with it -- slightly stronger and much shorter, so
+  // it fills the 20-26 px shoulder without re-inflating 30-40 px, where the old width was
+  // already at the reference and had nowhere to go.
+  haloGain: 0.060,
+  haloWidth: 0.55,
   haloExtent: 1.9,
   hotRadius: 22.0,
   // REFERENCE.md 4.4 is explicit that at a mirror hit there is NO visible hot spot or flare
@@ -310,19 +334,33 @@ float capsuleDist(float along, float across, float len) {
 // came out a third too fat with a bloated top, because the tonemap flattened an already
 // flat curve.
 //
-// So the composite is inverted instead. Taking the 4.1 profile table as the target in
-// DISPLAY space, mapping each entry back through linearToSRGB and the ACES quadratic, and
-// refitting pow(1 - |v|^n, m) to the resulting linear values gives n = 1.35, m = 2.07.
-// Composited, that returns 0.76 at 2 px, 0.71 at 6, 0.49 at 10, 0.31 at 14, 0.17 at 18 and
-// 0.06 at 22 against the measured 0.75, 0.71, 0.60, 0.47, 0.31, 0.14, with a 31 px FWHM, a
-// 13 px core and 52 px total width -- the three numbers 4.1 states outright.
+// So the composite is inverted instead: 4.1's table is treated as the target in DISPLAY
+// space, mapped back through linearToSRGB and the ACES quadratic, and a curve is fitted to
+// the resulting LINEAR values. The flat top survives that round trip -- the tonemap is what
+// supplies the flatness, so the linear curve underneath has to be the peakier one.
 //
-// The flat top survives the round trip: the tonemap is what supplies the flatness, so the
-// linear curve underneath has to be the peakier one.
+// The fit used to be pow(1 - |v|^1.35, 2.07), which has COMPACT SUPPORT: it is identically
+// zero past v = 1, i.e. past 26 reference px. Measured against ref_001 that produced a beam
+// with a fat shoulder and then a cliff -- normalised luminance 0.373 / 0.244 / 0.131 / 0.017
+// at 18 / 20 / 22 / 26 px against the reference's 0.303 / 0.179 / 0.114 / 0.035, so +23 %,
+// +36 %, +15 % of extra energy piled into the coloured shoulder and then 0.49x at 26, where
+// the curve simply stops. A beam that stops rather than dissolves holds a hard silhouette
+// edge, and it drags the fringe out with it, because the fringe is a difference of two
+// samples of THIS function and therefore peaks wherever this function's gradient does.
+//
+// This is not a width problem and must not be fixed by changing the width: FWHM already
+// measured 32.2 reference px against the reference's 30.0. It is tail shape. The curve is
+// refitted here as a super-gaussian, which has the same near-flat top under the tonemap but
+// an infinite tail, so the beam dissolves instead of ending. Fitted in linear space against
+// ref_001's own inverted profile, jointly with the haze lobe above, the exponent and radius
+// come out as exp(-(r / 12.0 px)^1.98), written below in v units where v = 1 is 26 px.
+//
+// Composited, that predicts 0.934 / 0.797 / 0.570 / 0.437 / 0.311 / 0.205 / 0.122 / 0.063 /
+// 0.027 / 0.005 of peak at r = 6 / 10 / 14 / 16 / 18 / 20 / 22 / 24 / 26 / 30 px against the
+// reference's measured 0.936 / 0.819 / 0.624 / 0.483 / 0.317 / 0.190 / 0.112 / 0.063 /
+// 0.031 / 0.005, with a 30.1 px FWHM against 30.0 and an unchanged 0.80 peak.
 float coreProfile(float v) {
-  float a = min(abs(v), 1.0);
-  float b = 1.0 - pow(a, 1.35);
-  return pow(max(b, 0.0), 2.07);
+  return exp(-pow(max(abs(v) * 2.1667, 1e-5), 1.98));
 }
 
 // The dispersed fan is a different problem: dozens of wedges have to sum per pixel into a
@@ -332,10 +370,12 @@ float coreProfile(float v) {
 // steepens the skirt, which keeps neighbouring wavelengths overlapping (a neutral wedge
 // near the prism) while shortening the faint tails that were spreading the visible wedge
 // to 41 degrees. At 48 samples over ~29 degrees the sample spacing is under a fifth of the
-// half-max radius, so no exponent in this range can let individual rails show through.
+// half-max radius, so no exponent in this range can let individual rails show through --
+// at 3.20 with the round-3 half-width the spacing is 0.13 of the half-max radius at
+// R = 140 reference px and still only 0.26 at R = 400, so the wedge stays continuous.
 float spectralProfile(float v) {
   float a = abs(v);
-  float p = exp(-pow(max(a * 2.05, 1e-4), 2.60));
+  float p = exp(-pow(max(a * 2.05, 1e-4), 3.20));
   return p * (1.0 - smoothstep(PROFILE_EXTENT - 0.45, PROFILE_EXTENT, a));
 }
 
@@ -459,25 +499,34 @@ function toMat4(m) {
   return id;
 }
 
+// How hard each end of a segment flares. Only the emitter mouth keeps a full-strength one:
+// REFERENCE.md 4.4 says outright that a mirror hit shows no visible hot spot beyond the
+// rod's own specular line, "the beam simply turns".
+const BOUNCE_HOT = 0.12;
+
 function hotStart(seg) {
   if (seg.generation === 0) return 1.0;
   // The first thing that happens inside the glass is the entry face lighting up, which is
   // where the reference prism reads brightest (REFERENCE.md 6.2).
   if (seg.inside) return 0.85;
-  return seg.nm ? 0.16 : 0.5;
+  return seg.nm ? 0.16 : BOUNCE_HOT;
 }
 
-// A fold is a bounce, and a bounce is where the reference flares. `terminal === null` is
-// the tracer's word for "the ray carries on" - a mirror face or a glass interface - so the
-// incoming segment's end and the outgoing segment's start both get a hot spot there and
-// the two overlap into the chevron the reference shows at every mirror. Spectral segments
-// keep only a token flare: a fan crosses many interfaces and would otherwise pick up a
-// bead at each one.
+// `terminal === null` is the tracer's word for "the ray carries on" - a mirror face or a
+// glass interface - so the incoming segment's end and the outgoing segment's start both
+// flare there and the two overlap.
+//
+// They used to overlap at 0.5 each, which with hotGain put a 1.42x multiplier on the inside
+// of every V. That is a lot: it pushes the core from 0.46 linear to 0.65, deep into the
+// part of the ACES curve where chroma is compressed away, so both legs of the bend washed to
+// neutral white and the warm band the reference runs continuously around the inside of the
+// bend disappeared exactly where it is most visible. At BOUNCE_HOT the same overlap is
+// 1.10x: the corner still reads as a corner and the fringe survives it.
 function hotEnd(seg) {
   const t = seg.terminal;
   if (typeof t === 'string' && t.indexOf('receptor') === 0) return 0.9;
   if (t === 'wall') return 0.12;
-  if (t === null || t === undefined) return seg.nm ? 0.16 : 0.5;
+  if (t === null || t === undefined) return seg.nm ? 0.16 : BOUNCE_HOT;
   return 0.0;
 }
 

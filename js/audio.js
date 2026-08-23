@@ -1,6 +1,6 @@
-// Web Audio engine for REFRACT: sample bank + synthesised beam hum, rotation ticks, receptor bells and solve cue.
+// Web Audio engine for REFRACT: sample bank + synthesised beam hum, rotation ticks, receptor bells, solve cue and the haptic channel.
 // Exports: init, unlock, play, stop, setBeamEnergy, setLitCount, rotateTick, receptorChime,
-// solve, setMuted, getMuted, toggleMuted, setMasterVolume, isReady, dispose.
+// solve, haptic, canVibrate, setMuted, getMuted, toggleMuted, setMasterVolume, isReady, dispose.
 
 const MANIFEST_URL = new URL('../assets/audio/manifest.json', import.meta.url);
 const STORAGE_KEY = 'refract.sound';
@@ -724,6 +724,7 @@ export function init(opts) {
   }
   listen();
   syncWithState();
+  watchModals();
   return A.fetching;
 }
 
@@ -889,6 +890,72 @@ export function solve(opts) {
   safe(() => solveVoice(o));
 }
 
+/* ---------- haptics ---------- */
+
+/* Sound and vibration are separate channels on purpose. The player who needs the buzz most
+   is the one holding a phone on silent, and for that player the mute toggle is already the
+   reason nothing can be heard — routing haptics through it would silence both at once.
+   Durations are milliseconds; arrays alternate buzz and gap, as navigator.vibrate expects. */
+const HAPTICS = {
+  detent: 4,
+  detentAccent: 8,
+  arm: 6,
+  pick: 6,
+  place: 12,
+  remove: [10, 28, 10],
+  reject: [16, 40, 16],
+  undo: 8,
+  reset: [14, 26, 14],
+  receptor: [6, 22, 10],
+  solve: [16, 40, 22, 40, 34],
+};
+// Two events landing in the same frame (a placement that also lights a receptor) must not
+// stack into one long mush; the second one is dropped rather than queued.
+const HAPTIC_MIN_GAP_MS = 18;
+// ...except when the second event is the more important one. A placement that completes the
+// board fires place and then solve inside the same trace, and dropping the payoff to protect
+// a 12 ms tap would be exactly backwards. navigator.vibrate replaces whatever is playing.
+const HAPTIC_URGENT = new Set(['solve', 'reject', 'reset', 'remove']);
+let hapticGate = null;
+let lastHapticAt = -1e9;
+
+export function canVibrate() {
+  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return false;
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
+  if (!hapticGate) hapticGate = safe(() => window.matchMedia('(pointer: coarse)')) || null;
+  return hapticGate ? !!hapticGate.matches : true;
+}
+
+export function haptic(kind) {
+  const pattern = HAPTICS[kind];
+  if (pattern === undefined) return false;
+  if (!canVibrate()) return false;
+  const t = millis();
+  if (t - lastHapticAt < HAPTIC_MIN_GAP_MS && !HAPTIC_URGENT.has(kind)) return false;
+  lastHapticAt = t;
+  return !!safe(() => navigator.vibrate(pattern));
+}
+
+/* js/ui/modals.js flips data-modal on <html> when a panel opens or closes and owns no audio
+   of its own, which left modal_open.ogg and modal_close.ogg in the bank but unreachable —
+   every panel transition was silent apart from the chip click that caused it. Watching the
+   attribute keeps the cue here in the audio module instead of scattering play() calls
+   through a file this one does not own. */
+function watchModals() {
+  if (typeof MutationObserver !== 'function' || typeof document === 'undefined') return;
+  const root = document.documentElement;
+  if (!root) return;
+  let open = root.getAttribute('data-modal') === 'open';
+  const obs = new MutationObserver(() => {
+    const next = root.getAttribute('data-modal') === 'open';
+    if (next === open) return;
+    open = next;
+    play(next ? 'modal_open' : 'modal_close');
+    haptic('arm');
+  });
+  safe(() => obs.observe(root, { attributes: true, attributeFilter: ['data-modal'] }));
+}
+
 export function setMuted(muted) {
   const next = !!muted;
   if (next === A.muted && A.nodes) return;
@@ -940,6 +1007,8 @@ export default {
   rotateTick,
   receptorChime,
   solve,
+  haptic,
+  canVibrate,
   setMuted,
   getMuted,
   toggleMuted,

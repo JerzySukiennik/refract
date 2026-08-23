@@ -1,7 +1,7 @@
 // Pointer, touch, wheel and keyboard handling: raw events become intents against js/state.js, in board units.
 
 import { pixelToBoard } from './render/gl.js';
-import { rotateTick } from './audio.js';
+import { rotateTick, haptic } from './audio.js';
 import {
   state,
   addOptic,
@@ -22,19 +22,30 @@ import {
 const BOARD = 1000;
 const WALL = 40;
 const PLACE_SNAP = 25;
+// The drawn protractor orbit. js/render/board.js draws the handle dot at its own RING_R = 67,
+// so this must stay 67 or the mouse target stops sitting on the thing the player can see.
 const RING_RADIUS = 67;
 const HANDLE_GRAB = 26;
-// A finger is not a mouse: at the measured mobile board scale of 0.2958 px/unit the 26-unit
-// grab radius is a 15.4 px target, well under the 44 px minimum, for the one gesture the
-// hint text explicitly asks for. Coarse pointers get double the radius (30.8 px). It stops
-// short of the full 74 units that 44 px would need because a circle that big would reach
-// past the optic centre and steal every body drag.
-const HANDLE_GRAB_COARSE = 52;
+// A finger is not a mouse. At the measured mobile board scale of 0.2958 px/unit a 44 px
+// Apple-HIG target is 148.8 units across, i.e. a 74-unit radius. A 74-unit circle centred on
+// the drawn handle would reach 7 units past the optic's own centre and swallow every body
+// drag, so the coarse circle is centred 95 units out instead — outward of the handle, away
+// from the 55-unit mirror body. Around the handle dot that leaves 30.2 px of reach outward,
+// 13.6 px inward and 20.3 px either side: a 43.8 x 40.6 px target on the visible affordance,
+// against 28 px before. Landing ON 44, not past it.
+const HANDLE_GRAB_COARSE = 74;
+const HANDLE_CENTRE_COARSE = 95;
 const WALL_CLEARANCE = 16;
 const BODY_RADIUS = { mirror: 55, prism: 43 };
 const GRAB_RADIUS = { mirror: 62, prism: 50 };
 const OVERLAP_FACTOR = 0.6;
 const MAGNET_DEG = 4;
+// js/ui/hud.js arms a tile when a finger travels TAP_SLOP = 8 px or less. Anything further is
+// a drag and belongs to us, so the two thresholds are deliberately the same number: there is
+// no gap between them where a gesture does nothing at all.
+const DOCK_DRAG_SLOP = 8;
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 8;
 
 function radiusOf(type) {
   return BODY_RADIUS[type] || 45;
@@ -122,15 +133,6 @@ function onMagnet(deg) {
   return Math.abs(k - Math.round(k)) < 0.02;
 }
 
-function buzz(ms) {
-  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
-  try {
-    navigator.vibrate(ms);
-  } catch (err) {
-    void err;
-  }
-}
-
 // One tick per crossed detent; the 15-degree magnets get a louder, higher accent so the
 // magnet reads as magnetic rather than as an arbitrary stutter in the 5-degree stepping.
 function detentFeedback(optic, deg, pointerType) {
@@ -141,7 +143,7 @@ function detentFeedback(optic, deg, pointerType) {
     panX: optic.x,
     cooldown: magnet ? 0 : DETENT_COOLDOWN_MS,
   });
-  if (pointerType === 'touch' || pointerType === 'pen') buzz(magnet ? 8 : 4);
+  if (pointerType === 'touch' || pointerType === 'pen') haptic(magnet ? 'detentAccent' : 'detent');
 }
 
 function opticAt(x, y) {
@@ -166,8 +168,9 @@ function handleAt(x, y, coarse) {
   if (!id) return false;
   const o = getOptic(id);
   if (!o || o.fixed) return false;
-  const hx = o.x + Math.cos(o.angle) * RING_RADIUS;
-  const hy = o.y - Math.sin(o.angle) * RING_RADIUS;
+  const orbit = coarse ? HANDLE_CENTRE_COARSE : RING_RADIUS;
+  const hx = o.x + Math.cos(o.angle) * orbit;
+  const hy = o.y - Math.sin(o.angle) * orbit;
   const dx = hx - x;
   const dy = hy - y;
   const r = coarse ? HANDLE_GRAB_COARSE : HANDLE_GRAB;
@@ -184,6 +187,10 @@ export function createInput(canvas, opts = {}) {
   let shift = false;
   let enabled = true;
   let lastTapTime = 0;
+  // A finger that starts on a dock tile: hud.js gets the tap, we get the drag.
+  let dockTouch = null;
+  let press = null;
+  let pressTimer = 0;
 
   canvas.style.touchAction = 'none';
 
@@ -274,6 +281,42 @@ export function createInput(canvas, opts = {}) {
     emit('drag:start', state.dragging);
   }
 
+  /* ---------- long press ---------- */
+
+  // With no UNDO chip in the HUD and no keyboard, a thumb's only way to take one piece back
+  // used to be RESET, which wipes the whole board. Half a second of stillness on a placed
+  // optic removes exactly that optic.
+  function cancelPress() {
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = 0;
+    press = null;
+  }
+
+  function armPress(optic, ev) {
+    cancelPress();
+    press = { id: optic.id, x: ev.clientX, y: ev.clientY, pointerId: ev.pointerId };
+    pressTimer = setTimeout(() => {
+      pressTimer = 0;
+      const id = press && press.id;
+      press = null;
+      const o = id ? getOptic(id) : null;
+      if (!o || o.fixed) return;
+      if (active) {
+        if (active.kind === 'move') moveOptic(active.id, active.startX, active.startY);
+        active = null;
+        setDragging(null);
+        emit('drag:end', 'cancel');
+      }
+      // No buzz here: removeOptic emits optic:remove and js/main.js answers it.
+      removeOptic(id);
+    }, LONG_PRESS_MS);
+  }
+
+  function pressMoved(ev) {
+    if (!press || ev.pointerId !== press.pointerId) return;
+    if (Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > LONG_PRESS_SLOP) cancelPress();
+  }
+
   function onPointerDown(ev) {
     if (!enabled || active) return;
     if (ev.pointerType === 'mouse' && ev.button === 2) return;
@@ -307,6 +350,7 @@ export function createInput(canvas, opts = {}) {
       }
       lastTapTime = now;
       beginMove(hit, p, ev);
+      if (ev.pointerType !== 'mouse') armPress(hit, ev);
       return;
     }
     selectOptic(null);
@@ -329,25 +373,32 @@ export function createInput(canvas, opts = {}) {
     }
   }
 
+  function updatePlace(ev, p) {
+    const x = snapPos(p.x, ev.shiftKey || shift);
+    const y = snapPos(p.y, ev.shiftKey || shift);
+    const d = state.dragging;
+    if (!d) return;
+    d.x = x;
+    d.y = y;
+    d.valid = isValidPlacement(active.type, x, y, null);
+    setDragging(d);
+    setCursor(p.x, p.y, 'closed');
+  }
+
   function onPointerMove(ev) {
     if (!enabled) return;
+    pressMoved(ev);
     const p = toBoard(ev);
     if (!active) {
       updateHover(p.x, p.y);
       return;
     }
     if (ev.pointerId !== active.pointerId) return;
+    if (active.viaDock) return;
     if (ev.cancelable) ev.preventDefault();
     active.moved = true;
     if (active.kind === 'place') {
-      const x = snapPos(p.x, ev.shiftKey || shift);
-      const y = snapPos(p.y, ev.shiftKey || shift);
-      const d = state.dragging;
-      d.x = x;
-      d.y = y;
-      d.valid = isValidPlacement(active.type, x, y, null);
-      setDragging(d);
-      setCursor(p.x, p.y, 'closed');
+      updatePlace(ev, p);
       return;
     }
     const optic = getOptic(active.id);
@@ -384,8 +435,7 @@ export function createInput(canvas, opts = {}) {
     }
   }
 
-  function onPointerUp(ev) {
-    if (!active || ev.pointerId !== active.pointerId) return;
+  function commitUp(ev) {
     const p = toBoard(ev);
     const drag = state.dragging;
     if (active.kind === 'place' && drag) {
@@ -404,15 +454,89 @@ export function createInput(canvas, opts = {}) {
     setDragging(null);
     emit('drag:end', kind);
     updateHover(p.x, p.y);
+  }
+
+  function onPointerUp(ev) {
+    cancelPress();
+    if (!active || ev.pointerId !== active.pointerId) return;
+    if (active.viaDock) return;
+    commitUp(ev);
     release(ev, ev.target);
   }
 
   function onPointerCancel(ev) {
+    cancelPress();
+    dockTouch = null;
     if (!active || ev.pointerId !== active.pointerId) return;
     if (active.kind === 'move') moveOptic(active.id, active.startX, active.startY);
     active = null;
     setDragging(null);
     emit('drag:end', 'cancel');
+  }
+
+  /* ---------- dock drag on a coarse pointer ---------- */
+
+  /* js/ui/hud.js stops coarse pointers at the dock in the capture phase so a thumb gets
+     tap-then-tap instead of a ghost hidden under itself. That is right for a tap and wrong
+     for a drag: the game's own default hint says DRAG A PIECE ONTO THE BOARD, and until now
+     a finger doing exactly that produced nothing at all. These three run on window, which is
+     upstream of hud's dock listener in the capture phase, so a finger that leaves the tile
+     still gets a real drag — ghost included — while a finger that stays still falls through
+     to hud and arms the tile as before. */
+
+  function onCaptureDown(ev) {
+    if (!enabled || active || ev.pointerType === 'mouse') return;
+    const tile = ev.target && ev.target.closest ? ev.target.closest('.dock-tile') : null;
+    if (!tile) return;
+    const type = tile.dataset.optic || tile.dataset.opticType || tile.dataset.type;
+    if (!type || remaining(type) <= 0) return;
+    dockTouch = { pointerId: ev.pointerId, type, x: ev.clientX, y: ev.clientY, started: false };
+  }
+
+  function onCaptureMove(ev) {
+    if (!dockTouch || ev.pointerId !== dockTouch.pointerId) return;
+    if (!dockTouch.started) {
+      if (Math.hypot(ev.clientX - dockTouch.x, ev.clientY - dockTouch.y) <= DOCK_DRAG_SLOP) return;
+      if (active) {
+        dockTouch = null;
+        return;
+      }
+      beginPlace(dockTouch.type, ev);
+      if (!active) {
+        dockTouch = null;
+        return;
+      }
+      active.viaDock = true;
+      dockTouch.started = true;
+      haptic('pick');
+    }
+    if (!active) return;
+    active.moved = true;
+    ev.stopPropagation();
+    if (ev.cancelable) ev.preventDefault();
+    updatePlace(ev, toBoard(ev));
+  }
+
+  function onCaptureUp(ev) {
+    if (!dockTouch || ev.pointerId !== dockTouch.pointerId) return;
+    const started = dockTouch.started;
+    dockTouch = null;
+    if (!started || !active || !active.viaDock) return;
+    ev.stopPropagation();
+    // No haptic here: commitUp either lands an optic:add or emits 'invalid', and js/main.js
+    // answers both. Buzzing here as well would double every drop.
+    commitUp(ev);
+  }
+
+  function onCaptureCancel(ev) {
+    if (!dockTouch || ev.pointerId !== dockTouch.pointerId) return;
+    const started = dockTouch.started;
+    dockTouch = null;
+    if (started && active && active.viaDock) {
+      active = null;
+      setDragging(null);
+      emit('drag:end', 'cancel');
+    }
   }
 
   function onWheel(ev) {
@@ -502,6 +626,10 @@ export function createInput(canvas, opts = {}) {
   }
 
   const target = dock === document ? document : dock;
+  window.addEventListener('pointerdown', onCaptureDown, { capture: true, passive: true });
+  window.addEventListener('pointermove', onCaptureMove, { capture: true, passive: false });
+  window.addEventListener('pointerup', onCaptureUp, { capture: true, passive: false });
+  window.addEventListener('pointercancel', onCaptureCancel, { capture: true, passive: true });
   target.addEventListener('pointerdown', onPointerDown, { passive: false });
   if (target !== document) canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
   window.addEventListener('pointermove', onPointerMove, { passive: false });
@@ -520,11 +648,20 @@ export function createInput(canvas, opts = {}) {
         active = null;
         setDragging(null);
       }
+      if (!enabled) {
+        cancelPress();
+        dockTouch = null;
+      }
     },
     isDragging() {
       return !!active;
     },
     dispose() {
+      cancelPress();
+      window.removeEventListener('pointerdown', onCaptureDown, true);
+      window.removeEventListener('pointermove', onCaptureMove, true);
+      window.removeEventListener('pointerup', onCaptureUp, true);
+      window.removeEventListener('pointercancel', onCaptureCancel, true);
       target.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);

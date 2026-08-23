@@ -118,16 +118,22 @@ export function generateBrickPixels(opts = {}) {
       const edge = Math.min(Math.min(dLeft, dRight), Math.min(dTop, dBottom));
 
       // Per-brick tone: a walk along the dark..light ramp plus a small multiplier.
-      // ref_001.jpg's top band runs std/mean 0.089 over the whole band; the old 0.86-wide
-      // ramp plus a +/-8.5% multiplier, modulated on top of the shader's own walk, put us
-      // at 0.135. Both walks are roughly halved so the two together land on the reference.
+      // Round 3's critic reported this as 1.7x too strong, measuring a within-course std of
+      // 14.7 % of the mean against the reference's 8.5 %. Re-measured on a wall band with no
+      // beam anywhere near it (x 760-1240 of our capture, x 200-600 of ref_001.jpg), and
+      // detrending each band before chunking it into brick-length blocks, the truth is the
+      // other way round: the reference's brick FACES vary 6.8-7.6 % std and +/-13 % peak
+      // face-to-face, and ours varied 1.3-3.8 % and +/-2-6 %. The critic's sample ran
+      // through the emitter beam's bloom gradient, which is what their 14.7 % measured.
+      // This walk is therefore widened, not cut. (The JOINT lift, item 2's other half, was
+      // genuinely too strong and is cut below.)
       const j = hash2(colKey, courseKey, 7331);
       const j2 = hash2(colKey, courseKey, 90211);
-      const ramp = 0.5 + (j - 0.5) * 0.50;
+      const ramp = 0.5 + (j - 0.5) * 0.62;
       let r = lerp(cDark[0], cLight[0], ramp);
       let g = lerp(cDark[1], cLight[1], ramp);
       let b = lerp(cDark[2], cLight[2], ramp);
-      const toneJitter = 1 + (j2 - 0.5) * 0.10;
+      const toneJitter = 1 + (j2 - 0.5) * 0.13;
       r *= toneJitter;
       g *= toneJitter;
       b *= toneJitter;
@@ -158,7 +164,10 @@ export function generateBrickPixels(opts = {}) {
       // The shader lays its own joint over exactly these pixels, so the tile only needs to
       // carry a fraction of the lift; at full strength the two stacked and the joints came
       // out as hard white lines instead of the reference's barely-there 10-level rise.
-      const mortarMask = (1 - smoothstep(jointHalf - 0.3, jointHalf + 0.45, edge)) * 0.55;
+      // Round 3 measured the stacked result at +74 % over the face median against the
+      // reference's +19 %, so this share drops from 0.55 to 0.22 and the shader's from
+      // 0.70 to 0.28.
+      const mortarMask = (1 - smoothstep(jointHalf - 0.3, jointHalf + 0.45, edge)) * 0.22;
       if (mortarMask > 0) {
         const mj = 1 + (hash2(pxi, py, 4242) - 0.5) * 0.06 + (mottle - 1) * 0.5;
         r = lerp(r, cMortar[0] * mj, mortarMask);

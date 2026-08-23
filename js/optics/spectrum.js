@@ -275,34 +275,60 @@ export function sampleWavelengths(count) {
 // blue bar with hue 265-339 where green belongs.
 //
 // So the render path leaves nmToLinearRGB alone (receptor flags and legend swatches still
-// want a violet you can see) and builds its own palette out of three strictly linear
-// factors:
+// want a violet you can see) and builds its own palette out of two independent parts: a
+// CHROMATICITY that says what colour a wavelength is, and a SOURCE POWER that says how
+// much of it the emitter puts out. Both are strictly linear in spectral power, so additive
+// blending still performs the CIE integral.
+//
+// CHROMATICITY, per wavelength, normalised so its largest channel is 1:
 //
 //   1. XYZ_TO_RGB * (X, Y, Z)      -- the CIE integrand itself, nothing else.
 //   2. + RENDER_WHITE * Y          -- desaturation toward the wavelength's own luminance.
-//      Linear in power because Y is, so it survives summation, unlike a per-wavelength
-//      min-subtraction. Being proportional to Y it desaturates the greens and yellows
-//      hardest and the violet and red wings barely at all, which is exactly the shape
-//      REFERENCE.md 5.1 measures: saturation 1.00 at the violet edge, 0.90 at the red
-//      edge, and 0.22-0.31 through the green middle.
-//   3. * m^(-RENDER_WING_POWER), where m is that wavelength's own largest channel -- the
-//      emitter's SPD, expressed per unit of perceptual arc, which is the axis the fan is
-//      spread along. Weighting on m rather than on Y matters: HSV value, which is what
-//      every measurement of the reference fan reports, is the LARGEST channel, not the
-//      luminance. Tapering Y left cyan (where no single channel is large) sitting in a
-//      45 % value trough between the blue and red humps; tapering m flattens the quantity
-//      actually being measured, and the deepest interior minimum on a captured arc fell
-//      from 57 % of peak to 2-4 %. At 0.56 the 385 nm and 697 nm ends of the palette sit
-//      at 0.066 and 0.115 of its peak, against REFERENCE.md 5.1's measured 0.02 and 0.07
-//      out of 0.44.
+//      Being proportional to Y it desaturates the greens and yellows hardest and the
+//      violet and red wings barely at all, which is the shape REFERENCE.md 5.1 measures:
+//      saturation 1.00 at the violet edge, 0.90 at the red edge, 0.22-0.31 in the middle.
+//      A residual clamp at zero is still needed for the far violet, where sRGB has no red
+//      primary to give; it bites only on samples already deep in the wing.
 //
-// A residual clamp at zero is still needed for the far violet, where sRGB has no red
-// primary to give; it bites only on samples already below 2 % of peak value.
+// SOURCE POWER is the whole fix of round 3, and it replaces the old m^(-0.56) taper.
+// That taper FLATTENED every wavelength to nearly the same HSV value, which is why the
+// blind critic measured our fan at 36.5 degrees between its 10 % points against the
+// reference's 22.0 at R = 140 ref px: with no wavelength dimmer than about 7 % of peak,
+// nothing ever fell under the 10 % contour, so the fan's visible width was its FULL
+// traced width and the outermost degrees -- pure 380-420 nm and 660-700 nm, which sRGB
+// renders as near-black navy and crimson -- were as bright as its middle. 31.5 of our
+// 36.5 lit degrees were spent on those two dead ends.
+//
+// The reference does the opposite. REFERENCE.md 5.1's own table is a bump: 0.02 and 0.04
+// at the violet edge, a 0.42-0.44 plateau across the middle six degrees, 0.14 and 0.07 at
+// the red edge -- and the section says the fan is ~28 degrees wide in total but only 18
+// between its 10 % points, i.e. roughly a fifth of the arc at each end sits UNDER the
+// contour. So the emitter is not an equal-energy radiator; it is a lamp whose output dies
+// towards both ends of the visible band, exactly like every real white source.
+//
+// SOURCE_* below is that lamp, written in perceptual arc position because that is the axis
+// the fan is spread along (PRISM_DEFAULTS.shapeBlend). It is a soft-shouldered bump rather
+// than a gaussian ON PURPOSE: a gaussian's tails reach 1e-40 within a tenth of the arc, and
+// since the balance below forces a neutral full-spectrum sum, a palette with no red flux
+// left answers by multiplying its red channel by an enormous gain -- which puts the crimson
+// straight back, only now with no orange receptor left to aim at. The 1/(1+t^n) tails hold
+// the 415 nm and 610 nm bands at 7.2 % and 3.4 % of peak: dim, in the same range as the
+// reference's own wings, and still clearly visible on a black board.
 const RENDER_INTEGRAL_SAMPLES = 512;
 const RENDER_WHITE = 2.0;
-const RENDER_WING_POWER = 0.56;
+const SOURCE_CENTRE = 0.50;
+const SOURCE_WIDTH_VIOLET = 0.22;
+const SOURCE_WIDTH_RED = 0.15;
+const SOURCE_FALLOFF = 4.0;
 
-function renderRawInto(out, nm) {
+export function sourcePower(nm) {
+  const p = perceptualPosition(nm);
+  const w = p < SOURCE_CENTRE ? SOURCE_WIDTH_VIOLET : SOURCE_WIDTH_RED;
+  return 1 / (1 + Math.pow(Math.abs(p - SOURCE_CENTRE) / w, SOURCE_FALLOFF));
+}
+
+// Chromaticity only: the sign of the colour, with its magnitude divided out.
+function renderChromaInto(out, nm) {
   const X = cieX(nm);
   const Y = cieY(nm);
   const Z = cieZ(nm);
@@ -314,30 +340,74 @@ function renderRawInto(out, nm) {
   if (g < 0) g = 0;
   if (b < 0) b = 0;
   const m = Math.max(r, g, b, 1e-9);
-  const w = Math.pow(m, -RENDER_WING_POWER);
-  out[0] = r * w;
-  out[1] = g * w;
-  out[2] = b * w;
+  out[0] = r / m;
+  out[1] = g / m;
+  out[2] = b / m;
   return out;
 }
 
-// One von Kries balance, so that a pixel reached by the WHOLE spectrum comes out exactly
-// neutral at any sample count. Because every factor above is linear, this is the only
-// correction needed, and a 512-sample sweep of the finished palette means exactly
-// (1.000, 1.000, 1.000) -- which is what makes the wedge leave the prism grey without any
-// hand-authored grey being drawn.
-const RENDER_GAIN = (() => {
+// Two constraints have to hold at once and they pull against each other:
+//
+//   (a) a pixel reached by the WHOLE spectrum must come out exactly neutral, which is what
+//       makes the wedge leave the prism grey (REFERENCE.md 5.2) without any hand-authored
+//       grey being drawn. That is a per-CHANNEL scale -- one von Kries balance.
+//   (b) each wavelength's own displayed value must equal SOURCE_POWER, which is what sets
+//       the fan's radial brightness profile and therefore its 10 % width. That is a
+//       per-WAVELENGTH scale.
+//
+// Applying either one disturbs the other, so they are alternated to a fixed point. It is
+// the same alternating-scaling argument as Sinkhorn balancing and converges geometrically;
+// forty passes over 512 samples costs well under a millisecond at load and the residual is
+// below 1e-12. The channel gains are re-normalised every pass, because only their RATIOS
+// are determined -- their common scale is fixed once at the end so that the mean of a full
+// sweep is (1, 1, 1), exactly as before.
+const RENDER_GAIN = [1, 1, 1];
+let RENDER_NORM = 1;
+
+(() => {
   const s = sampleWavelengths(RENDER_INTEGRAL_SAMPLES);
-  const acc = new Float64Array(3);
-  const tmp = new Float64Array(3);
-  for (let i = 0; i < s.length; i++) {
-    renderRawInto(tmp, s[i]);
-    acc[0] += tmp[0];
-    acc[1] += tmp[1];
-    acc[2] += tmp[2];
-  }
   const n = s.length;
-  return [n / Math.max(acc[0], 1e-6), n / Math.max(acc[1], 1e-6), n / Math.max(acc[2], 1e-6)];
+  const chroma = new Float64Array(n * 3);
+  const power = new Float64Array(n);
+  const tmp = new Float64Array(3);
+  for (let i = 0; i < n; i++) {
+    renderChromaInto(tmp, s[i]);
+    chroma[i * 3] = tmp[0];
+    chroma[i * 3 + 1] = tmp[1];
+    chroma[i * 3 + 2] = tmp[2];
+    power[i] = sourcePower(s[i]);
+  }
+  const acc = new Float64Array(3);
+  for (let pass = 0; pass < 40; pass++) {
+    acc[0] = 0;
+    acc[1] = 0;
+    acc[2] = 0;
+    for (let i = 0; i < n; i++) {
+      const r = chroma[i * 3] * RENDER_GAIN[0];
+      const g = chroma[i * 3 + 1] * RENDER_GAIN[1];
+      const b = chroma[i * 3 + 2] * RENDER_GAIN[2];
+      const k = power[i] / Math.max(r, g, b, 1e-9);
+      acc[0] += r * k;
+      acc[1] += g * k;
+      acc[2] += b * k;
+    }
+    const mean = (acc[0] + acc[1] + acc[2]) / 3;
+    for (let c = 0; c < 3; c++) {
+      RENDER_GAIN[c] *= mean / Math.max(acc[c], 1e-12);
+    }
+    const g0 = Math.cbrt(Math.max(RENDER_GAIN[0] * RENDER_GAIN[1] * RENDER_GAIN[2], 1e-30));
+    RENDER_GAIN[0] /= g0;
+    RENDER_GAIN[1] /= g0;
+    RENDER_GAIN[2] /= g0;
+  }
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const r = chroma[i * 3] * RENDER_GAIN[0];
+    const g = chroma[i * 3 + 1] * RENDER_GAIN[1];
+    const b = chroma[i * 3 + 2] * RENDER_GAIN[2];
+    sum += r * (power[i] / Math.max(r, g, b, 1e-9));
+  }
+  RENDER_NORM = n / Math.max(sum, 1e-12);
 })();
 
 // Linear sRGB for one wavelength, scaled so that the mean over a full perceptually
@@ -345,10 +415,14 @@ const RENDER_GAIN = (() => {
 export function nmToRenderRGBInto(out, nm) {
   if (nm < NM_MIN) nm = NM_MIN;
   else if (nm > NM_MAX) nm = NM_MAX;
-  renderRawInto(out, nm);
-  out[0] *= RENDER_GAIN[0];
-  out[1] *= RENDER_GAIN[1];
-  out[2] *= RENDER_GAIN[2];
+  renderChromaInto(out, nm);
+  const r = out[0] * RENDER_GAIN[0];
+  const g = out[1] * RENDER_GAIN[1];
+  const b = out[2] * RENDER_GAIN[2];
+  const k = (sourcePower(nm) * RENDER_NORM) / Math.max(r, g, b, 1e-9);
+  out[0] = r * k;
+  out[1] = g * k;
+  out[2] = b * k;
   return out;
 }
 

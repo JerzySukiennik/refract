@@ -108,13 +108,17 @@ function solvedPanel() {
   else if (used === par) verdict = '<span class="good">ON PAR</span>';
   else verdict = '<span class="accent">' + (used - par) + ' OVER PAR</span>';
 
+  /* REFERENCE 9.3: the reference panel carries ONE score line, `5 PIECES USED · PAR 5`,
+     and our verdict used to hang under it on a <br> with 3.5 px of air between the two cap
+     bands where the reference's whole cadence works in 14-32 px steps. Folded into one
+     line it reads as the reference's three-item stack and the cramped pair disappears. */
   return {
     className: 'panel panel-solved',
     label: 'Level solved',
     html:
       '<h2 class="panel-word">SOLVED</h2>' +
       '<p class="panel-sub">' + used + ' PIECE' + (used === 1 ? '' : 'S') + ' USED &middot; PAR ' + par +
-      '<br>' + verdict + '</p>' +
+      ' &middot; ' + verdict + '</p>' +
       '<div class="panel-actions">' +
         (hasNext
           ? '<button type="button" class="btn btn-primary" data-act="next"><span class="gw">NEXT LEVEL</span></button>'
@@ -155,7 +159,7 @@ function levelsPanel() {
   const cleared = clearedCount();
 
   return {
-    className: 'panel',
+    className: 'panel panel-levels',
     label: 'Level select',
     html:
       '<p class="panel-head">LEVELS &middot; ' + cleared + ' / ' + LEVELS.length + ' CLEARED</p>' +

@@ -14,7 +14,7 @@ const SRC = '../../assets/cursors/';
 // size. `pointer_a` is the shape the reference actually uses: a classic arrow with a tail
 // and a notch. `pointer_b`, which this used to load, is a plain triangle with neither.
 const SPRITES = {
-  idle:     { file: 'pointer_a.png', hx: 9.5, hy: 6, box: 43 },
+  idle:     { file: 'pointer_a.png', hx: 9.5, hy: 6, box: 40 },
   point:    { file: 'hand_point.png', hx: 10, hy: 2, box: 27 },
   open:     { file: 'hand_open.png', hx: 16, hy: 16, box: 30 },
   closed:   { file: 'hand_closed.png', hx: 16, hy: 16, box: 28 },
@@ -59,6 +59,19 @@ const HOVER_TO_SPRITE = {
 // just below the protractor ring of the selected optic (ref_010: ring centre (147.7, 277),
 // arrow tip (151, 312), i.e. +6 u right and +62 u down at that frame's scale).
 const CAPTURE_PARK = { x: 6, y: 62 };
+
+// With nothing selected there is no optic to park against, and the stand-in used to be hidden
+// outright — which is why four of nine blind pairs could be told apart on cursor presence
+// alone. All 150 reference frames have one. Two fallbacks, both taken from the footage:
+//
+//   IDLE_PARK  ref_001's idle arrow sits with its tip at (511, 408) in a 720 x 694 frame,
+//              i.e. 71.0 % across and 58.8 % down, over open board.
+//   MODAL_PARK with the solve panel up, ref_038 puts a pointing hand at (589, 411) — 81.8 %
+//              across, 59.2 % down — out on the board clear of the panel, NOT on a button.
+//              REFERENCE.md 8's "hovering the FREE PLAY button" does not survive its own
+//              frame: in both ref_034 and ref_038 the hand is over open board.
+const IDLE_PARK = { fx: 0.710, fy: 0.588 };
+const MODAL_PARK = { fx: 0.818, fy: 0.592 };
 
 const captureMode = (() => {
   try {
@@ -107,9 +120,21 @@ function hexToRGB(hex) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-// Kenney outline sprites are a white body inside a black outline. Remap luminance so the
-// body takes the player colour and the outline becomes the bright rim seen in the reference.
-function tint(img, size, fillHex, outlineHex) {
+// The white rim the reference cursor carries is thin: measured on ref_001's idle arrow
+// (x 511-529, y 408-437) it is 1 px against a 19 px sprite, and the blue body fills the rest.
+// The Kenney outline is far heavier than that — drawn at box 40 it lands 2.5 px wide, which
+// is what made our arrow read as a sticker pasted over the board rather than a cursor.
+//
+// The rim cannot be thinned by biasing the luminance ramp, because the source border is
+// solidly black rather than a soft edge, and it cannot be thinned by shrinking the sprite
+// without taking the whole cursor under the size REFERENCE.md 8 specifies. So the border is
+// eroded geometrically instead: flood the dark border inward from the silhouette edge, keep
+// RIM_PX of it, and hand the rest to the body. Dark pixels that are NOT reachable from the
+// edge through dark pixels — the knuckle creases and finger lines inside the hands — are
+// untouched, so the sprites keep their internal drawing.
+const RIM_PX = 1.25;
+
+function tint(img, size, fillHex, outlineHex, boxPx) {
   const c = document.createElement('canvas');
   c.width = size;
   c.height = size;
@@ -122,12 +147,71 @@ function tint(img, size, fillHex, outlineHex) {
   const line = hexToRGB(outlineHex);
   const data = ctx.getImageData(0, 0, size, size);
   const px = data.data;
-  for (let i = 0; i < px.length; i += 4) {
-    if (px[i + 3] === 0) continue;
+  const n = size * size;
+
+  // Luminance, and the dark-border mask.
+  const lum = new Float32Array(n);
+  const dark = new Uint8Array(n);
+  for (let p = 0; p < n; p++) {
+    const i = p * 4;
+    if (px[i + 3] < 24) { lum[p] = -1; continue; }
     const l = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) / 255;
-    px[i] = line[0] + (fill[0] - line[0]) * l;
-    px[i + 1] = line[1] + (fill[1] - line[1]) * l;
-    px[i + 2] = line[2] + (fill[2] - line[2]) * l;
+    lum[p] = l;
+    if (l < 0.5) dark[p] = 1;
+  }
+
+  // Chamfer distance from the outside, following dark pixels only. dist stays 0 for the body
+  // and for interior dark detail, which is exactly the set that must not be eroded.
+  const dist = new Float32Array(n);
+  const queue = new Int32Array(n);
+  let head = 0;
+  let tail = 0;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const p = y * size + x;
+      if (!dark[p]) continue;
+      let edge = x === 0 || y === 0 || x === size - 1 || y === size - 1;
+      if (!edge) {
+        for (let dy = -1; dy <= 1 && !edge; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (lum[(y + dy) * size + (x + dx)] < 0) { edge = true; break; }
+          }
+        }
+      }
+      if (edge) { dist[p] = 1; queue[tail++] = p; }
+    }
+  }
+  while (head < tail) {
+    const p = queue[head++];
+    const x = p % size;
+    const y = (p - x) / size;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        const q = ny * size + nx;
+        if (!dark[q] || dist[q] > 0) continue;
+        dist[q] = dist[p] + (dx && dy ? 1.41 : 1);
+        queue[tail++] = q;
+      }
+    }
+  }
+
+  const rim = RIM_PX * (size / (boxPx || size));
+  for (let p = 0; p < n; p++) {
+    if (lum[p] < 0) continue;
+    let k = lum[p];
+    if (dist[p] > 0) {
+      // Inside the eroded band the pixel keeps the rim; past it, it joins the body.
+      const t = (dist[p] - rim) / 1.2;
+      k = Math.min(Math.max(t, 0), 1);
+    }
+    const i = p * 4;
+    px[i] = line[0] + (fill[0] - line[0]) * k;
+    px[i + 1] = line[1] + (fill[1] - line[1]) * k;
+    px[i + 2] = line[2] + (fill[2] - line[2]) * k;
   }
   ctx.putImageData(data, 0, 0);
   return c.toDataURL('image/png');
@@ -144,8 +228,8 @@ async function buildSprite(name, fillHex, boxPx) {
   const box = boxPx || spec.box || BASE;
   const k = box / BASE;
   return {
-    x1: tint(img, Math.round(box), fillHex, OUTLINE),
-    x2: tint(img, Math.round(box * 2), fillHex, OUTLINE),
+    x1: tint(img, Math.round(box), fillHex, OUTLINE, box),
+    x2: tint(img, Math.round(box * 2), fillHex, OUTLINE, box),
     box,
     hx: spec.hx * k,
     hy: spec.hy * k,
@@ -195,9 +279,11 @@ function derivedState() {
   if (state.dragging) {
     const drag = typeof state.dragging === 'object' ? state.dragging : null;
     if (drag && drag.valid === false) return 'disabled';
-    // Rotating is done with the handle, which REFERENCE.md 8 shows under the pointing hand;
-    // moving and placing carry the closed fist.
-    return drag && drag.kind === 'rotate' ? 'point' : 'closed';
+    // REFERENCE.md 8 claims the pointing hand rides the protractor handle, but its own frames
+    // say otherwise: ref_010 and ref_030 are both mid rotation-drag and both show the plain
+    // arrow at the handle. The pointing hand appears only on the FREE PLAY button (ref_034,
+    // ref_038). Moving and placing keep the closed fist.
+    return drag && drag.kind === 'rotate' ? 'idle' : 'closed';
   }
   return hoverSprite();
 }
@@ -285,12 +371,39 @@ function selectedOptic() {
   return list.find((o) => o && o.id === state.selectedId) || null;
 }
 
-// In capture mode there is no pointer to follow, so the stand-in appears only when the frame
-// has something to point at — a selection or a drag — and stays out of clean beam shots.
+// Whether a panel is up. Nothing on the panel is pointed at; the only thing that matters is
+// that a modal is open, in which case the footage parks the cursor out on the board beside it.
+function modalOpen() {
+  return document.documentElement.getAttribute('data-modal') === 'open';
+}
+
+// In capture mode there is no pointer to follow, so the stand-in is parked where the footage
+// parks it: out beside the panel when one is up, beside the selected optic's ring when
+// something is selected, and otherwise over open board.
+function parkTarget() {
+  const w = window.innerWidth || 0;
+  const h = window.innerHeight || 0;
+  if (modalOpen()) {
+    if (!w || !h) return null;
+    return { x: w * MODAL_PARK.fx, y: h * MODAL_PARK.fy, sprite: 'point' };
+  }
+  const optic = selectedOptic();
+  if (optic) {
+    const m = boardMetrics();
+    return {
+      x: m.x + (optic.x + CAPTURE_PARK.x) * m.scale,
+      y: m.y + (optic.y + CAPTURE_PARK.y) * m.scale,
+      sprite: applied || 'idle',
+    };
+  }
+  if (!w || !h) return null;
+  return { x: w * IDLE_PARK.fx, y: h * IDLE_PARK.fy, sprite: 'idle' };
+}
+
 function updateParkedCursor() {
   if (!captureMode || !localEl || (domMode && !autoPark)) return;
-  const optic = selectedOptic();
-  if (!optic) {
+  const target = parkTarget();
+  if (!target) {
     if (autoPark) {
       autoPark = false;
       domMode = false;
@@ -299,14 +412,13 @@ function updateParkedCursor() {
     }
     return;
   }
-  const m = boardMetrics();
   autoPark = true;
   domMode = true;
   document.documentElement.dataset.cursorMode = 'dom';
   localEl.classList.remove('is-hidden');
-  localPx.x = m.x + (optic.x + CAPTURE_PARK.x) * m.scale;
-  localPx.y = m.y + (optic.y + CAPTURE_PARK.y) * m.scale;
-  syncLocalSprite(applied || 'idle');
+  localPx.x = target.x;
+  localPx.y = target.y;
+  syncLocalSprite(target.sprite);
   placeLocal();
 }
 
@@ -466,6 +578,17 @@ export function initCursors() {
   installCursors().catch(() => { void 0; });
   on('change', onStateChange);
   on('cursor', applyCursor);
+
+  // Opening a modal is not a game-state change, so nothing would re-park the stand-in onto
+  // its button. Watched only in capture mode, where the stand-in exists at all.
+  if (captureMode && typeof MutationObserver === 'function') {
+    const root = document.getElementById('modal-root');
+    const obs = new MutationObserver(() => updateParkedCursor());
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-modal'] });
+    if (root) obs.observe(root, { childList: true, subtree: true });
+    window.addEventListener('resize', updateParkedCursor, { passive: true });
+  }
+
   applyCursor();
   updateParkedCursor();
   return api;

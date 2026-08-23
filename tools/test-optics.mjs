@@ -27,6 +27,7 @@ import {
   RECEPTOR_BANDS,
 } from '../js/optics/spectrum.js';
 import { traceScene } from '../js/optics/trace.js';
+import { LEVELS } from '../js/levels.js';
 
 let passed = 0;
 let failed = 0;
@@ -477,18 +478,40 @@ test('tracing is deterministic and fast enough', () => {
     const y = b.segments[i];
     ok(x.ax === y.ax && x.by === y.by && x.nm === y.nm && x.intensity === y.intensity, `segment ${i} differs`);
   }
-  // The very first traces in a process run interpreted, before the JIT has tiered up the
-  // cast/push loop, and they cost 3-4 ms against a warm cost near 0.3 ms. In the game the
-  // tracer is warm long before a player can place anything, so timing a cold call measures
-  // the JIT, not the tracer. Warm up first, then time steady state against the same bound.
-  for (let i = 0; i < 20; i++) traceScene(prismLevel, prismOptics, { spectralSamples: 48 });
-  let worst = 0;
-  for (let i = 0; i < 40; i++) {
-    const r = traceScene(prismLevel, prismOptics, { spectralSamples: 48 });
-    worst = Math.max(worst, r.stats.ms);
-  }
-  console.log(`      slowest of 40 warm traces: ${worst.toFixed(3)} ms`);
-  ok(worst < 3, `slowest 48-sample trace was ${worst.toFixed(3)} ms`);
+  // Timing needs a distribution, not a maximum. Taking max-of-N here produced a number
+  // ("slowest trace 11 ms") that four agents in a row dismissed as environmental, because
+  // it looked like machine noise. It is not noise: the median is 0.4 ms and the 99th
+  // percentile is 11 ms. That gap is allocation — the tracer builds ~200 fresh segment
+  // objects per call, so at 60 Hz during a drag it produces roughly 12k objects a second
+  // and the collector periodically stops the world for ~11 ms. A player feels that as a
+  // hitch while dragging, on the one interaction that has to feel smooth.
+  //
+  // So assert on percentiles and name each one, and time a REAL level rather than the
+  // empty synthetic box, whose unabsorbed Fresnel bounces are unlike any actual board.
+  const percentiles = (level, optics, runs = 300) => {
+    for (let i = 0; i < 100; i++) traceScene(level, optics, { spectralSamples: 48 });
+    const t = [];
+    for (let i = 0; i < runs; i++) {
+      const a = performance.now();
+      traceScene(level, optics, { spectralSamples: 48 });
+      t.push(performance.now() - a);
+    }
+    t.sort((x, y) => x - y);
+    return { p50: t[Math.floor(runs * 0.5)], p99: t[Math.floor(runs * 0.99)], max: t[runs - 1] };
+  };
+
+  const hardest = LEVELS.reduce((worst, level) => {
+    const optics = (level.solution || []).map((o, i) => ({ id: 'sol' + i, ...o, fixed: false }));
+    const segs = traceScene(level, optics, { spectralSamples: 48 }).segments.length;
+    return segs > worst.segs ? { level, optics, segs } : worst;
+  }, { segs: -1 });
+
+  const r = percentiles(hardest.level, hardest.optics);
+  console.log(`      ${hardest.level.name}: p50 ${r.p50.toFixed(3)} ms, p99 ${r.p99.toFixed(3)} ms, max ${r.max.toFixed(3)} ms (${hardest.segs} segments)`);
+
+  ok(r.p50 < 3, `median trace on ${hardest.level.name} was ${r.p50.toFixed(3)} ms, budget 3 ms`);
+  ok(r.p99 < 6, `p99 trace on ${hardest.level.name} was ${r.p99.toFixed(3)} ms, budget 6 ms — ` +
+    'this is GC pressure from per-trace segment allocation, not machine noise; pool the segments');
 });
 
 test('fixed optics from the level are traced even when not in the optics list', () => {
