@@ -18,22 +18,31 @@ const PRISM_R = PRISM_SIDE / Math.sqrt(3.0);
 
 const RING_R = 67;
 const HANDLE_R = 8.35;
-const READOUT_CAP = 7.0;
+// REFERENCE.md 6.3: the disc carries a ~1.5 px dark outline. That outline is what makes the
+// hairline ring read as passing *behind* the handle instead of through it, so it is drawn as
+// a real occluder rather than as a multiply on an additive pass.
+const HANDLE_COLLAR = 2.6;
+const READOUT_CAP = 6.0;
 const READOUT_GAP = 8.0;
 
 const RECEPTOR_R = 29;
 const RECEPTOR_STROKE = 7.9;
+// The pool has to reach far enough to BE the floor light — nothing else shades the floor.
+const RECEPTOR_HALO = RECEPTOR_R + 132;
 const POLE_H = 77.5;
 const POLE_W = 5.3;
 const FLAG_W = 49.3;
-const FLAG_H = 22.9;
+const FLAG_H = 29.0;
 
-// REFERENCE.md 4.4: a machined grey housing box, 30 x 32 u, with a slit at its mouth that
-// is brighter than the beam it feeds. Our beam's start cap is round and reaches ~44 u back
-// past the emitter origin, so the housing is drawn longer than the reference's 30 u —
-// otherwise the whole block would sit inside the cap and never be seen.
-const EMITTER_W = 32;
-const EMITTER_LEN = 46;
+// REFERENCE.md 4.4: a machined grey housing box with a slit at its mouth that is brighter
+// than the beam it feeds. The reference's block is 30 u long, but our beam's start cap is
+// round and reaches back past the emitter origin, so a 30 u block would sit entirely inside
+// the cap and never be seen — hence the housing is grown backwards until it buries itself
+// in the wall behind it, which is also how the reference's reads: a fixture, not a highlight.
+const EMITTER_W = 52;
+const EMITTER_MIN_LEN = 78;
+const EMITTER_MAX_LEN = 150;
+const EMITTER_BURY = 14;
 const SLIT_SPAN = 29;
 
 const MAX_LIGHTS = 16;
@@ -72,14 +81,18 @@ function scene(hex, gain) {
   ]);
 }
 
-const BRICK_LIGHT = scene('#8E6C64');
-const BRICK_MID = scene('#815751');
-const BRICK_DARK = scene('#72463E');
-const BRICK_RIM = scene('#7F605D');
-const MORTAR = scene('#96706A');
+// Measured off ref_001.jpg: the reference brick face averages (126, 88, 81) sRGB with a
+// spread of about 32 levels between neighbouring bricks, and its mortar sits only ~10
+// levels off the face. Ours used to render at (146, 106, 98) with mortar 48 levels hot,
+// which is what made the wall read as one flat salmon fill with a pale grid pasted on.
+const BRICK_LIGHT = scene('#7B5A53');
+const BRICK_MID = scene('#6F4843');
+const BRICK_DARK = scene('#5E3831');
+const BRICK_RIM = scene('#6E504D');
+const MORTAR = scene('#96736C');
 
-const HOUSING = scene('#4D4B50');
-const HOUSING_EDGE = scene('#8B8992');
+const HOUSING = scene('#5C5A64');
+const HOUSING_EDGE = scene('#B6B4BE');
 const SLIT = scene('#E0DEE1', 3.0);
 
 const MIRROR_BODY = scene('#8F9AA6', 0.85);
@@ -91,14 +104,28 @@ const GLASS_EDGE = scene('#B9C4CE', 1.15);
 const PROTRACTOR = scene('#8A7A78');
 const READOUT = scene('#9A9298');
 
+// A matte disc, not a lamp. scene('#F8F8F8') would be ~2.5 scene units, which is 3.5x over
+// the bloom prefilter threshold (0.72) and blows a 16 px halo that erases the ring and the
+// mirror's end cap underneath. At 0.95 the disc still lands at 245/255 after bloom — REFERENCE.md 6.3
+// measures 248 — while its bloom contribution drops by roughly six times.
+const HANDLE_FILL = new Float32Array([0.95, 0.93, 0.90]);
+
+// Rejected placement. The ghost keeps its real silhouette and turns red *as an object*; a
+// neutral-grey ghost with a red dot at its centre reads as an indicator lamp, not a refusal.
+const REJECT_BODY = scene('#6E2A2C');
+const REJECT_BACK = scene('#2A1113');
+const REJECT_SPEC = scene('#FF7A72', 0.30);
+const REJECT_GLOW = scene('#E85A52', 0.12);
+const REJECT_EDGE = scene('#EE7A72', 0.80);
+
 const RECEPTORS = {
-  blue: { ring: [scene('#26549C'), scene('#43AAF9', 1.15)], flag: [scene('#183A7A'), scene('#4696E7', 1.1)] },
-  green: { ring: [scene('#6EAF74'), scene('#B1F5B5', 1.15)], flag: [scene('#507C52'), scene('#AAF0B2', 1.1)] },
-  orange: { ring: [scene('#9C682C'), scene('#EDB950', 1.15)], flag: [scene('#724420'), scene('#DEAC4C', 1.1)] },
-  red: { ring: [scene('#9C3030'), scene('#F96060', 1.15)], flag: [scene('#7A2020'), scene('#E76060', 1.1)] },
-  yellow: { ring: [scene('#9C9330'), scene('#F5E85C', 1.15)], flag: [scene('#7A7220'), scene('#E7DC5C', 1.1)] },
-  cyan: { ring: [scene('#2A9098'), scene('#5CE8F5', 1.15)], flag: [scene('#1E6E76'), scene('#5CD8E7', 1.1)] },
-  violet: { ring: [scene('#6A3A9C'), scene('#B47CF9', 1.15)], flag: [scene('#4E2A7A'), scene('#A47CE7', 1.1)] },
+  blue: { ring: [scene('#26549C'), scene('#43AAF9', 1.15)], flag: [scene('#2E5CAE'), scene('#4696E7', 1.1)] },
+  green: { ring: [scene('#6EAF74'), scene('#B1F5B5', 1.15)], flag: [scene('#74B278'), scene('#AAF0B2', 1.1)] },
+  orange: { ring: [scene('#9C682C'), scene('#EDB950', 1.15)], flag: [scene('#A8683A'), scene('#DEAC4C', 1.1)] },
+  red: { ring: [scene('#9C3030'), scene('#F96060', 1.15)], flag: [scene('#B23636'), scene('#E76060', 1.1)] },
+  yellow: { ring: [scene('#9C9330'), scene('#F5E85C', 1.15)], flag: [scene('#B2A83A'), scene('#E7DC5C', 1.1)] },
+  cyan: { ring: [scene('#2A9098'), scene('#5CE8F5', 1.15)], flag: [scene('#2FA0AB'), scene('#5CD8E7', 1.1)] },
+  violet: { ring: [scene('#6A3A9C'), scene('#B47CF9', 1.15)], flag: [scene('#7448B0'), scene('#A47CE7', 1.1)] },
 };
 const POLE = [scene('#7A8FAD'), scene('#AFC5F6', 1.05)];
 
@@ -181,6 +208,16 @@ vec3 gatherLight(vec2 p, vec2 n) {
 const FS_WALL = `${FS_HEAD}
 uniform vec2 uSize;
 uniform float uHoriz;
+// Per-face state, in the wall's own frame, ordered (-X, +X, -Y, +Y):
+//   0 = joined      this face butts into another wall; draw straight through it
+//   1 = open        this face looks into the room; darken through it and bleed onto the floor
+//   2 = outer       this face is the board's outer boundary; give it a lit lip
+uniform vec4 uFace;
+// Per-face overlap in the same order, so a joined edge has no antialiased seam.
+uniform vec4 uGrow;
+// Corner mitres, ordered (-X-Y, +X-Y, -X+Y, +X+Y). The outer ring is four rectangles but
+// the reference's frame is one continuous run of brick, mitred at every corner.
+uniform vec4 uMitre;
 uniform vec3 uLight;
 uniform vec3 uMid;
 uniform vec3 uDark;
@@ -189,13 +226,28 @@ uniform vec3 uMortar;
 uniform sampler2D uDetail;
 uniform float uDetailMix;
 ${LIGHT_BLOCK}
+float cornerSeam(float a, float b) {
+  float within = step(a, ${WALL_T.toFixed(1)}) * step(b, ${WALL_T.toFixed(1)});
+  return within * exp(-pow((a - b) / 1.7, 2.0));
+}
 void main() {
-  float horiz = uHoriz;
-  float thick = mix(uSize.x, uSize.y, horiz);
-  float along = mix(uSize.y, uSize.x, horiz);
-  float u = mix(vLocal.y + uSize.y * 0.5, vLocal.x + uSize.x * 0.5, horiz);
-  float v = mix(vLocal.x + uSize.x * 0.5, vLocal.y + uSize.y * 0.5, horiz);
-  float t = clamp(v / max(thick, 1e-3), 0.0, 1.0);
+  vec2 h = uSize * 0.5;
+  vec2 lo = -h - vec2(uGrow.x, uGrow.z);
+  vec2 hi = h + vec2(uGrow.y, uGrow.w);
+  vec2 ctr = (lo + hi) * 0.5;
+  vec2 ext = (hi - lo) * 0.5;
+  vec2 q = abs(vLocal - ctr) - ext;
+  float sd = min(max(q.x, q.y), 0.0) + length(max(q, 0.0));
+  float body = aa(sd);
+
+  vec4 dist = vec4(vLocal.x + h.x, h.x - vLocal.x, vLocal.y + h.y, h.y - vLocal.y);
+  float thick = mix(uSize.x, uSize.y, uHoriz);
+  float t = clamp(mix(dist.x, dist.z, uHoriz) / max(thick, 1e-3), 0.0, 1.0);
+
+  // The bond lives in BOARD space, not in each rectangle's own frame, so an interior stub
+  // shares its coursing with the frame it butts into instead of restarting mid-brick.
+  float u = mix(vBoard.y, vBoard.x, uHoriz);
+  float v = mix(vBoard.x, vBoard.y, uHoriz);
 
   float course = floor(v / ${COURSE_H.toFixed(2)});
   float rowOff = mod(course, 2.0) * ${(BRICK_LEN * 0.5).toFixed(3)};
@@ -204,40 +256,80 @@ void main() {
   float fu = bu - bIdx * ${BRICK_LEN.toFixed(2)};
   float fv = v - course * ${COURSE_H.toFixed(2)};
 
-  // Every slab is keyed from the top-left: light face, mid, dark far face, then a narrow
-  // re-lit lip on the far edge. REFERENCE.md 2.2.
-  vec3 col = mix(uLight, uMid, smoothstep(0.07, 0.36, t));
-  col = mix(col, uDark, smoothstep(0.36, 0.72, t));
-  col = mix(col, uRim, smoothstep(0.72, 0.87, t));
+  // The slab is a rounded extrusion: brightest close to either face, dimmest in the belly.
+  // Measured on ref_001.jpg, rows 58-72 of the top band: 133 at the faces, 118 mid-slab.
+  float belly = 1.0 - abs(t - 0.5) * 2.0;
+  vec3 col = mix(uLight, uMid, smoothstep(0.05, 0.62, belly));
+  col = mix(col, uDark, smoothstep(0.5, 1.0, belly) * 0.45);
+  col = mix(col, uRim, smoothstep(0.20, 0.0, belly) * 0.40);
 
-  float r = hash21(vec2(bIdx, course) + 0.13);
-  col *= 0.94 + 0.12 * r;
+  // Per-brick tone. The reference's neighbouring bricks differ by 10-20 levels, so this is
+  // a wide walk, not the +/-6 % nudge we had.
+  float r1 = hash21(vec2(bIdx, course) + 0.13);
+  float r2 = hash21(vec2(bIdx, course) * 1.71 + 5.37);
+  col *= 0.86 + 0.27 * r1;
+  col.r *= 1.0 + (r2 - 0.5) * 0.11;
+  col.b *= 1.0 - (r2 - 0.5) * 0.13;
+
   float grit = vnoise(vec2(u, v) * 1.35 + vec2(bIdx * 7.0, course * 11.0));
-  col *= 0.96 + 0.08 * grit;
+  float fine = vnoise(vec2(u, v) * 6.1 + vec2(19.7, 3.3));
+  col *= 0.92 + 0.10 * grit + 0.055 * fine;
 
-  vec3 det = texture(uDetail, vec2(u / ${(BRICK_LEN * 4.0).toFixed(2)}, v / ${(COURSE_H * 4.0).toFixed(2)})).rgb;
+  // The detail tile is 4 bricks by 12 courses; sampling it at four courses used to stretch
+  // it 3x and scramble the per-brick tone it carries.
+  vec3 det = texture(uDetail, vec2(u / ${(BRICK_LEN * 4.0).toFixed(2)}, v / ${(COURSE_H * 12.0).toFixed(2)})).rgb;
   float detL = dot(det, vec3(0.299, 0.587, 0.114));
-  col *= mix(1.0, 0.72 + 0.56 * detL, uDetailMix);
+  col *= mix(1.0, 0.66 + 0.68 * detL, uDetailMix);
 
-  // Mortar is LIGHTER than the brick face, never darker. REFERENCE.md 2.2, ARCHITECTURE.md 11.8.
+  // Mortar is lighter than the brick face but only just: ~10 levels in the reference, with
+  // a thin shadow line down the middle of the joint. REFERENCE.md 2.2.
   float jx = min(fu, ${BRICK_LEN.toFixed(2)} - fu);
   float jy = min(fv, ${COURSE_H.toFixed(2)} - fv);
-  float joint = 1.0 - min(smoothstep(0.0, ${JOINT_W.toFixed(2)}, jx), smoothstep(0.0, ${(JOINT_W * 0.85).toFixed(2)}, jy));
-  vec3 mortar = max(uMortar * (0.86 + 0.42 * (1.0 - t)), col * 1.12);
-  col = mix(col, mortar, joint * 0.85);
+  float je = min(jx, jy * 1.08);
+  float joint = 1.0 - smoothstep(0.0, ${JOINT_W.toFixed(2)}, je);
+  vec3 mortar = mix(uMortar, col * 1.10, 0.22);
+  col = mix(col, mortar, joint * 0.80);
+  col *= 1.0 - 0.10 * (1.0 - smoothstep(0.0, ${(JOINT_W * 0.40).toFixed(2)}, je));
 
-  vec2 nrm = mix(vec2(sign(vLocal.x), 0.0), vec2(0.0, sign(vLocal.y)), horiz);
-  if (t < 0.5) nrm = -nrm;
+  vec3 albedo = col;
+
+  // Open faces: darken through the last few units of brick. The reference spends 128 -> 113
+  // -> 42 -> 16 -> 6 across the inner course and only then reaches the floor.
+  vec4 open = clamp(1.0 - abs(uFace - 1.0), 0.0, 1.0);
+  vec4 outer = clamp(uFace - 1.0, 0.0, 1.0);
+  vec4 ramp = smoothstep(vec4(6.5), vec4(0.0), dist);
+  float darkK = max(max(ramp.x * open.x, ramp.y * open.y), max(ramp.z * open.z, ramp.w * open.w));
+  col *= 1.0 - 0.36 * darkK * darkK;
+
+  // Outer faces get the lit lip the reference shows on the board's outside edge.
+  vec4 lipR = smoothstep(vec4(5.0), vec4(0.4), dist);
+  float lipK = max(max(lipR.x * outer.x, lipR.y * outer.y), max(lipR.z * outer.z, lipR.w * outer.w));
+  col *= 1.0 + 0.36 * lipK;
+
+  float mit = max(max(uMitre.x * cornerSeam(dist.x, dist.z), uMitre.y * cornerSeam(dist.y, dist.z)),
+                  max(uMitre.z * cornerSeam(dist.x, dist.w), uMitre.w * cornerSeam(dist.y, dist.w)));
+  col *= 1.0 - 0.26 * mit;
+
+  vec2 nrm = mix(vec2(open.y - open.x, 0.0), vec2(0.0, open.w - open.z), uHoriz);
+  if (dot(nrm, nrm) < 0.01) nrm = mix(vec2(sign(vLocal.x), 0.0), vec2(0.0, sign(vLocal.y)), uHoriz);
   nrm = normalize(nrm + vec2(1e-5));
   vec3 lit = gatherLight(vBoard, nrm);
-  vec3 albedo = col;
-  col = albedo * (1.0 + 0.85 * lit) + lit * albedo * 0.9 + lit * 0.10;
+  col = col * (1.0 + 0.85 * lit) + lit * col * 0.9 + lit * 0.10;
 
-  float fadeV = smoothstep(0.0, 2.2 / max(thick, 1e-3), t) * smoothstep(1.0, 1.0 - 2.6 / max(thick, 1e-3), t);
-  float endDist = along * 0.5 - abs(mix(vLocal.y, vLocal.x, horiz));
-  float fadeU = smoothstep(0.0, 2.0, endDist);
-  float a = fadeV * fadeU;
-  fragColor = vec4(col * a, a);
+  // Contact bleed: brick this warm does not stop dead at its own edge. Only open faces
+  // spill, so the outer boundary of the board stays a hard edge.
+  float sideX = mix(open.x, open.y, step(0.0, vLocal.x));
+  float sideY = mix(open.z, open.w, step(0.0, vLocal.y));
+  float openOut = clamp(step(0.001, q.x) * sideX + step(0.001, q.y) * sideY, 0.0, 1.0);
+  float outd = max(sd, 0.0);
+  // Measured on ref_001.jpg: the first floor pixel past the wall reads 57 % of the brick
+  // face, then decays to 1 over about 8 css px. Keying it off the LIT face rather than the
+  // raw albedo keeps it below the brick at every brightness, so a wall standing in a beam
+  // never grows a glowing outline around a black border.
+  vec3 warm = albedo * (1.0 + 0.85 * lit) + lit * 0.06;
+  vec3 bleed = warm * openOut * (0.52 * exp(-outd / 3.6) + 0.16 * exp(-outd / 10.0)) * (1.0 - body);
+
+  fragColor = vec4(col * body + bleed, body);
 }`;
 
 // A machined block: flat fill, a one-unit lighter lip on the faces that point at the key
@@ -303,17 +395,43 @@ uniform vec3 uRing;
 uniform float uLit;
 uniform float uRadius;
 uniform float uStroke;
+uniform float uTime;
 void main() {
   float d = length(vLocal);
   float e = abs(d - uRadius);
-  float core = exp(-pow(e / (uStroke * 0.52), 2.0));
-  float glowR = mix(3.4, 6.0, uLit);
-  float glow = exp(-e / glowR) * mix(0.34, 0.58, uLit);
-  float inner = smoothstep(uRadius - uStroke * 0.6, 0.0, d);
-  float disc = inner * mix(0.045, 0.26, uLit);
-  float halo = exp(-max(d - uRadius, 0.0) / mix(5.0, 9.0, uLit)) * mix(0.05, 0.12, uLit);
+
+  // A receptor is a lamp that is already on. ORCHESTRATOR-NOTES.md section 2: satisfaction
+  // is an increase, never a switch from dark to lit. The idle state therefore breathes
+  // instead of sitting perfectly static.
+  float breathe = 1.0 + 0.055 * sin(uTime * 1.6 + uRadius * 0.11);
+  float amp = mix(breathe, 1.20, uLit);
+
+  float core = exp(-pow(e / (uStroke * 0.40), 2.0));
+  float glow = exp(-e / mix(3.8, 6.4, uLit)) * mix(0.38, 0.60, uLit);
+
+  // Interior. Measured on ref_001.jpg the reference reads 39 % of the stroke peak at dead
+  // centre and climbs outward to about 55 % just inside the stroke; ours used to read 15 %
+  // and get DARKER toward the middle, which is the whole reason it looked like an icon.
+  float ri = clamp(d / max(uRadius, 1e-3), 0.0, 1.0);
+  float discCut = 1.0 - smoothstep(uRadius - uStroke * 0.30, uRadius + uStroke * 0.70, d);
+  float disc = mix(0.32, 0.52, pow(ri, 1.4)) * discCut * mix(1.0, 1.30, uLit);
+
+  // Outer pool. Fitted to the reference's radial profile out of the stroke (75 % at 3 px,
+  // 55 % at 6 px, 45 % at 9 px, still readable 20 px out) as a near and a far lobe. This
+  // pool IS the floor light: nothing else shades the floor.
+  float x = max(d - uRadius, 0.0);
+  float near = exp(-x / mix(9.5, 12.5, uLit));
+  float far = exp(-x / mix(37.0, 48.0, uLit));
+  float pool = (0.82 * near + 0.46 * far) * mix(1.0, 1.22, uLit);
+  pool *= smoothstep(uRadius - uStroke * 0.6, uRadius + uStroke * 0.9, d);
+  pool *= smoothstep(1.0, 0.70, d / max(uHalf.x, 1e-3));
+  // A lamp inside the room cannot light the far side of the wall it stands against: the
+  // pool washes the brick and dies at the board's outer boundary.
+  vec2 ob = min(vBoard, vec2(${BOARD.toFixed(1)}) - vBoard);
+  pool *= smoothstep(0.0, ${(WALL_T * 0.92).toFixed(1)}, min(ob.x, ob.y));
+
   vec3 tint = mix(uRing, vec3(dot(uRing, vec3(0.30, 0.59, 0.11))), 0.30 * uLit);
-  vec3 col = uRing * (core + glow) + tint * (disc + halo);
+  vec3 col = uRing * (core + glow) * amp + tint * (disc + pool) * amp;
   fragColor = vec4(col * window(), 0.0);
 }`;
 
@@ -321,19 +439,33 @@ const FS_FLAG = `${FS_HEAD}
 uniform vec2 uSize;
 uniform vec3 uColor;
 uniform float uLit;
+uniform vec3 uGlow;
+uniform vec2 uGlowAt;
 void main() {
   vec2 p = (vLocal + uSize * 0.5) / uSize;
   float x = clamp(p.x, 0.0, 1.0);
-  float top = 0.04 + 0.032 * sin(x * 3.4);
-  float bot = mix(0.97, top + 0.02, pow(x, 2.1)) + 0.085 * sin(x * 6.4 + 0.4) * (1.0 - x * x);
-  bot = max(bot, top + 0.01);
+
+  // A pennant, not a triangle: one travelling wave down a tapering cloth. Built around a
+  // wavy centre line so the whole flag moves instead of only its lower edge — at the 28 css
+  // px this renders at, a wave applied to one edge alone collapses into a flat wedge.
+  float wave = sin(x * 4.9 + 0.55);
+  float mid = 0.50 + 0.185 * wave * (0.30 + 0.70 * x);
+  float span = 0.445 * (1.0 - 0.52 * x * x);
+  float top = mid - span;
+  float bot = mid + span;
+
   float inside = step(top, p.y) * step(p.y, bot) * step(0.0, p.x) * step(p.x, 1.0);
   float edge = min(min(p.y - top, bot - p.y), min(p.x, 1.0 - p.x)) * uSize.y;
   float a = inside * clamp(edge / max(uPx, 1e-3) + 0.5, 0.0, 1.0);
-  float shade = 0.80 + 0.32 * smoothstep(1.0, 0.0, x) + 0.10 * sin(x * 6.0);
-  vec3 col = uColor * shade * (1.0 + 0.85 * uLit);
+
+  // Fold shading follows the same wave, so the cloth reads as curved cloth.
+  float fold = 0.80 + 0.30 * cos(x * 4.9 + 0.55) + 0.16 * smoothstep(1.0, 0.0, x);
+  vec3 col = uColor * fold * (1.0 + 0.85 * uLit);
   float rim = smoothstep(2.4, 0.0, edge) * inside;
   col += uColor * rim * (0.25 + 0.6 * uLit);
+  // The ring below is a lamp, so the pennant is lit from beneath by its own colour.
+  float gd = length(vLocal - uGlowAt);
+  col += uGlow * (0.30 * exp(-gd / 34.0) + 0.22 * exp(-gd / 90.0)) * (1.0 + 0.7 * uLit);
   fragColor = vec4(col * a, a);
 }`;
 
@@ -341,6 +473,8 @@ const FS_POLE = `${FS_HEAD}
 uniform vec2 uSize;
 uniform vec3 uColor;
 uniform float uLit;
+uniform vec3 uGlow;
+uniform vec2 uGlowAt;
 void main() {
   vec2 h = uSize * 0.5;
   vec2 d = abs(vLocal) - h;
@@ -349,6 +483,10 @@ void main() {
   float across = clamp((vLocal.x + h.x) / uSize.x, 0.0, 1.0);
   float shade = 0.62 + 0.75 * exp(-pow((across - 0.34) / 0.26, 2.0));
   vec3 col = uColor * shade * (1.0 + 0.55 * uLit);
+  // Standing in the ring's pool, the pole picks up its colour strongly at the foot and
+  // loses it toward the pennant — the single clearest tell that the lamp is on.
+  float gd = length(vLocal - uGlowAt);
+  col += uGlow * (0.85 * exp(-gd / 26.0) + 0.34 * exp(-gd / 78.0)) * (1.0 + 0.8 * uLit);
   float glow = exp(-max(sd, 0.0) / 3.0) * 0.20 * uLit * window();
   fragColor = vec4(col * a + uColor * glow, a);
 }`;
@@ -413,19 +551,24 @@ void main() {
   float inside = aa(d);
   float edge = exp(-pow(abs(d) / 1.4, 2.0));
 
+  // REFERENCE.md 6.2: outline plus an almost transparent fill. The unlit fill used to land
+  // 120/255 over a black floor, i.e. brighter than the reference's *lit* prism (measured
+  // +80 on ref_030), which turned an untouched piece of glass into a filled grey plate. The
+  // unlit terms are cut and the lit multipliers raised to match, so a prism in the beam
+  // still brightens the same way while one sitting in the dark is only its outline.
   vec3 bodyTint = mix(vec3(0.55, 0.60, 0.68), uLitColor, clamp(uLitAmount * 1.3, 0.0, 1.0));
   float depth = smoothstep(0.0, uR * 0.9, -d);
-  vec3 body = bodyTint * (0.055 + 0.10 * depth) * (1.0 + 2.6 * uLitAmount);
+  vec3 body = bodyTint * (0.017 + 0.032 * depth) * (1.0 + 8.5 * uLitAmount);
 
   vec2 a = vec2(-uR * 0.5, -uR * 0.866);
   vec2 b = vec2(uR * 0.72, 0.0);
   float path = exp(-pow(sdSeg(vLocal, a, b) / 1.6, 2.0)) * inside;
 
-  float halo = exp(-max(d, 0.0) / 3.4) * (0.10 + 0.55 * uLitAmount);
+  float halo = exp(-max(d, 0.0) / 3.4) * (0.035 + 0.615 * uLitAmount);
 
   vec3 col = body;
-  vec3 add = uEdge * edge * (0.85 + 2.2 * uLitAmount);
-  add += mix(uEdge, uLitColor, clamp(uLitAmount, 0.0, 1.0)) * path * (0.30 + 1.1 * uLitAmount);
+  vec3 add = uEdge * edge * (0.70 + 2.35 * uLitAmount);
+  add += mix(uEdge, uLitColor, clamp(uLitAmount, 0.0, 1.0)) * path * (0.13 + 1.27 * uLitAmount);
   add += mix(uEdge, uLitColor, 0.7) * halo;
 
   float alpha = inside * uAlpha * 0.55;
@@ -435,25 +578,46 @@ void main() {
 // No degree ticks. ARCHITECTURE.md section 11 item 4 and REFERENCE.md 10.1 item 13: a plain
 // hairline circle at about 30 % opacity plus the handle dot is what makes it read as an
 // instrument rather than a widget.
+// The whole pass used to write alpha 0, i.e. pure additive over the board, which made the
+// dark outline around the handle physically impossible: no fragment could ever land below
+// the background it was drawn over. The disc and its collar now write premultiplied alpha
+// (the board's blend is ONE / ONE_MINUS_SRC_ALPHA), so they occlude the beam and the mirror
+// end cap beneath them, and the ring is cut where it meets the collar instead of shining
+// through the disc.
 const FS_PROTRACTOR = `${FS_HEAD}
 uniform float uR;
 uniform vec3 uColor;
+uniform vec3 uHandleFill;
 uniform vec2 uHandle;
 uniform float uAlpha;
-uniform float uSnap;
+uniform float uGrab;
 void main() {
   float d = length(vLocal);
-  float ring = exp(-pow((d - uR) / 1.05, 2.0));
-
   float hd = length(vLocal - uHandle);
-  float handle = smoothstep(${HANDLE_R.toFixed(2)}, ${(HANDLE_R - 1.1).toFixed(2)}, hd);
-  float handleRing = smoothstep(${(HANDLE_R + 2.2).toFixed(2)}, ${HANDLE_R.toFixed(2)}, hd) * (1.0 - handle);
-  float handleHalo = exp(-max(hd - ${HANDLE_R.toFixed(2)}, 0.0) / 5.5) * (0.17 + 0.11 * uSnap);
 
-  vec3 col = uColor * ring;
-  col += vec3(2.6, 2.55, 2.5) * handle + vec3(0.55) * handleHalo;
-  col *= 1.0 - 0.55 * handleRing;
-  fragColor = vec4(max(col, vec3(0.0)) * uAlpha * window(), 0.0);
+  float hr = ${HANDLE_R.toFixed(2)} + 0.55 * uGrab;
+  float collar = hr + ${HANDLE_COLLAR.toFixed(2)};
+
+  float disc = smoothstep(hr, hr - 1.0, hd);
+  float band = smoothstep(collar, collar - 1.3, hd) * (1.0 - disc);
+
+  // Grab feedback. Rotating has to look different from merely being selected, but degree
+  // ticks are forbidden (REFERENCE.md 10.1 item 13) and a radius needle would lie exactly
+  // along a mirror's own rod, so the ring instead thickens over the ~60 degree arc the
+  // handle is riding and the whole circle picks up a little light.
+  float sigma = 1.05 + 1.25 * uGrab * smoothstep(uR * 0.58, uR * 0.12, hd);
+  float ring = exp(-pow((d - uR) / sigma, 2.0)) * (1.0 - smoothstep(collar + 1.2, collar - 0.4, hd));
+
+  // A 3 px glint, not a lamp.
+  float glint = exp(-max(hd - hr, 0.0) / 1.7) * (1.0 - disc) * (0.11 + 0.07 * uGrab);
+
+  vec3 col = uColor * ring * (1.0 + 0.30 * uGrab);
+  col += uHandleFill * disc;
+  col += uHandleFill * glint * 0.5;
+
+  float w = window();
+  float occl = clamp(disc + band * 0.92, 0.0, 1.0) * uAlpha * w;
+  fragColor = vec4(max(col, vec3(0.0)) * uAlpha * w, occl);
 }`;
 
 const FS_TEXT = `${FS_HEAD}
@@ -829,7 +993,7 @@ export function createBoardRenderer(gl) {
         const lit = litFactors.get(receptorKey(r, i)) || 0;
         const c = pal.ring[1];
         const peak = Math.max(c[0], c[1], c[2]) || 1;
-        addLight(r.x, r.y, r.x, r.y, c[0] / peak, c[1] / peak, c[2] / peak, 0.16 + 0.5 * lit);
+        addLight(r.x, r.y, r.x, r.y, c[0] / peak, c[1] / peak, c[2] / peak, 0.62 + 0.85 * lit);
       }
     }
   }
@@ -867,19 +1031,70 @@ export function createBoardRenderer(gl) {
     return { r: r / peak, g: g / peak, b: b / peak, amount: Math.min(k, 1) };
   }
 
+  // Face states, in the wall's own frame (-X, +X, -Y, +Y): 0 joined, 1 open, 2 outer.
+  // The outer ring is four rectangles that must read as one continuous mitred frame, so the
+  // faces where they meet are marked joined — no inner ramp, no bleed, and a small overlap
+  // so the two antialiased edges do not leave the black notch the critic measured.
+  const FACE_JOINED = 0;
+  const FACE_OPEN = 1;
+  const FACE_OUTER = 2;
+  const JOIN_GROW = 0.9;
+
   function wallRects(level) {
     const out = [];
-    out.push({ x: 0, y: 0, w: BOARD, h: WALL_T });
-    out.push({ x: 0, y: BOARD - WALL_T, w: BOARD, h: WALL_T });
-    out.push({ x: 0, y: WALL_T, w: WALL_T, h: BOARD - WALL_T * 2 });
-    out.push({ x: BOARD - WALL_T, y: WALL_T, w: WALL_T, h: BOARD - WALL_T * 2 });
+    out.push({
+      x: 0, y: 0, w: BOARD, h: WALL_T,
+      face: [FACE_OUTER, FACE_OUTER, FACE_OUTER, FACE_OPEN],
+      grow: [0, 0, 0, 0],
+      mitre: [1, 1, 0, 0],
+    });
+    out.push({
+      x: 0, y: BOARD - WALL_T, w: BOARD, h: WALL_T,
+      face: [FACE_OUTER, FACE_OUTER, FACE_OPEN, FACE_OUTER],
+      grow: [0, 0, 0, 0],
+      mitre: [0, 0, 1, 1],
+    });
+    out.push({
+      x: 0, y: WALL_T, w: WALL_T, h: BOARD - WALL_T * 2,
+      face: [FACE_OUTER, FACE_OPEN, FACE_JOINED, FACE_JOINED],
+      grow: [0, 0, JOIN_GROW, JOIN_GROW],
+      mitre: [0, 0, 0, 0],
+    });
+    out.push({
+      x: BOARD - WALL_T, y: WALL_T, w: WALL_T, h: BOARD - WALL_T * 2,
+      face: [FACE_OPEN, FACE_OUTER, FACE_JOINED, FACE_JOINED],
+      grow: [0, 0, JOIN_GROW, JOIN_GROW],
+      mitre: [0, 0, 0, 0],
+    });
     if (level && Array.isArray(level.walls)) {
       for (const w of level.walls) {
-        if (w && w.w > 0 && w.h > 0) out.push(w);
+        if (!w || !(w.w > 0) || !(w.h > 0)) continue;
+        // An interior stub that reaches the frame butts into it rather than ending in a
+        // cropped brick, so that edge is joined and the frame's bleed covers the seam.
+        const face = [
+          w.x <= WALL_T + 0.5 ? FACE_JOINED : FACE_OPEN,
+          w.x + w.w >= BOARD - WALL_T - 0.5 ? FACE_JOINED : FACE_OPEN,
+          w.y <= WALL_T + 0.5 ? FACE_JOINED : FACE_OPEN,
+          w.y + w.h >= BOARD - WALL_T - 0.5 ? FACE_JOINED : FACE_OPEN,
+        ];
+        out.push({
+          x: w.x, y: w.y, w: w.w, h: w.h,
+          face,
+          grow: [
+            face[0] === FACE_JOINED ? JOIN_GROW : 0,
+            face[1] === FACE_JOINED ? JOIN_GROW : 0,
+            face[2] === FACE_JOINED ? JOIN_GROW : 0,
+            face[3] === FACE_JOINED ? JOIN_GROW : 0,
+          ],
+          mitre: [0, 0, 0, 0],
+        });
       }
     }
     return out;
   }
+
+  // Enough room outside every rectangle for the contact bleed to fade to nothing.
+  const WALL_MARGIN = 22;
 
   function drawWalls(level) {
     const u = use(progs.wall);
@@ -894,11 +1109,55 @@ export function createBoardRenderer(gl) {
     gl.uniform1f(u.uDetailMix, detailMix);
     bindLights(u);
     for (const w of wallRects(level)) {
+      const face = w.face || [FACE_OPEN, FACE_OPEN, FACE_OPEN, FACE_OPEN];
+      const grow = w.grow || [0, 0, 0, 0];
+      const mitre = w.mitre || [0, 0, 0, 0];
       gl.uniform2f(u.uSize, w.w, w.h);
       gl.uniform1f(u.uHoriz, w.w >= w.h ? 1 : 0);
-      place(u, w.x + w.w / 2, w.y + w.h / 2, w.w / 2, w.h / 2, 0);
+      gl.uniform4f(u.uFace, face[0], face[1], face[2], face[3]);
+      gl.uniform4f(u.uGrow, grow[0], grow[1], grow[2], grow[3]);
+      gl.uniform4f(u.uMitre, mitre[0], mitre[1], mitre[2], mitre[3]);
+      place(u, w.x + w.w / 2, w.y + w.h / 2, w.w / 2 + WALL_MARGIN, w.h / 2 + WALL_MARGIN, 0);
       drawQuad();
     }
+  }
+
+  // REFERENCE.md 4.4. The board's y axis grows downward and trace.js pushes the first ray
+  // along (cos dir, sin dir) in exactly that frame, so the housing has to sit at
+  // -(cos dir, sin dir) from the mouth. Getting this sign wrong buries the block inside the
+  // beam, which is what used to happen.
+  // How far back the housing can run before it meets brick. The reference's emitter reads as
+  // a fixture bolted to the wall, not as a bar floating in the room, so the block is grown
+  // until it buries itself in whatever wall stands behind it.
+  function housingLength(level, ca, sa, ex, ey) {
+    let best = Infinity;
+    for (const w of wallRects(level)) {
+      let t0 = 0;
+      let t1 = EMITTER_MAX_LEN;
+      const dx = -ca;
+      const dy = -sa;
+      if (Math.abs(dx) < 1e-6) {
+        if (ex < w.x || ex > w.x + w.w) continue;
+      } else {
+        let a = (w.x - ex) / dx;
+        let b = (w.x + w.w - ex) / dx;
+        if (a > b) { const s2 = a; a = b; b = s2; }
+        t0 = Math.max(t0, a);
+        t1 = Math.min(t1, b);
+      }
+      if (Math.abs(dy) < 1e-6) {
+        if (ey < w.y || ey > w.y + w.h) continue;
+      } else {
+        let a = (w.y - ey) / dy;
+        let b = (w.y + w.h - ey) / dy;
+        if (a > b) { const s2 = a; a = b; b = s2; }
+        t0 = Math.max(t0, a);
+        t1 = Math.min(t1, b);
+      }
+      if (t1 >= Math.max(t0, 0) && t0 < best) best = Math.max(t0, 0);
+    }
+    if (!isFinite(best)) return EMITTER_MIN_LEN;
+    return Math.min(Math.max(best + EMITTER_BURY, EMITTER_MIN_LEN), EMITTER_MAX_LEN);
   }
 
   // REFERENCE.md 4.4. The board's y axis grows downward and trace.js pushes the first ray
@@ -912,31 +1171,34 @@ export function createBoardRenderer(gl) {
     const ca = Math.cos(dir);
     const sa = Math.sin(dir);
 
-    const bx = e.x - ca * (EMITTER_LEN * 0.5);
-    const by = e.y - sa * (EMITTER_LEN * 0.5);
+    const len = housingLength(level, ca, sa, e.x, e.y);
+    const bx = e.x - ca * (len * 0.5);
+    const by = e.y - sa * (len * 0.5);
 
     // The top-left key light, rotated into the housing's own frame so the lit lip stays on
     // the board's top-left no matter which way the emitter points.
     const lx = (ca + sa) * SQRT1_2;
     const ly = (ca - sa) * SQRT1_2;
 
+    // A pool of spill behind and around the block, so the housing sits in its own light
+    // instead of on bare black. Drawn first: the box is opaque and covers its middle.
+    const ug = use(progs.glow);
+    gl.uniform2f(ug.uSpan, ca * len * 0.34, sa * len * 0.34);
+    gl.uniform1f(ug.uRadius, 74);
+    gl.uniform1f(ug.uPower, 2.4);
+    gl.uniform3f(ug.uColor, SLIT[0] * 0.070, SLIT[1] * 0.072, SLIT[2] * 0.080);
+    place(ug, e.x - ca * len * 0.34, e.y - sa * len * 0.34, len * 0.34 + 76, len * 0.34 + 76, 0);
+    drawQuad();
+
     const ub = use(progs.box);
-    gl.uniform2f(ub.uSize, EMITTER_LEN, EMITTER_W);
+    gl.uniform2f(ub.uSize, len, EMITTER_W);
     gl.uniform3fv(ub.uFill, HOUSING);
     gl.uniform3fv(ub.uEdge, HOUSING_EDGE);
     gl.uniform2f(ub.uLitDir, lx, ly);
     // The housing is a machined block, not a lamp: it barely responds to its own beam.
     gl.uniform1f(ub.uLightGain, 0.14);
     bindLights(ub);
-    place(ub, bx, by, EMITTER_LEN / 2 + 5, EMITTER_W / 2 + 5, dir);
-    drawQuad();
-
-    const ug = use(progs.glow);
-    gl.uniform2f(ug.uSpan, 0, 0);
-    gl.uniform1f(ug.uRadius, 39);
-    gl.uniform1f(ug.uPower, 3.2);
-    gl.uniform3f(ug.uColor, SLIT[0] * 0.10, SLIT[1] * 0.10, SLIT[2] * 0.11);
-    place(ug, e.x, e.y, 40, 40, 0);
+    place(ub, bx, by, len / 2 + 5, EMITTER_W / 2 + 5, dir);
     drawQuad();
 
     // The mouth: brighter than the beam it feeds (0.88 against 0.78), drawn at the beam's
@@ -949,7 +1211,7 @@ export function createBoardRenderer(gl) {
     drawQuad();
   }
 
-  function drawReceptors(level, dt) {
+  function drawReceptors(level, dt, t) {
     if (!level || !Array.isArray(level.receptors)) return;
     const evals = cache.state && cache.state.trace && Array.isArray(cache.state.trace.receptors)
       ? cache.state.trace.receptors : null;
@@ -989,18 +1251,35 @@ export function createBoardRenderer(gl) {
       const raise = 7.5 * lit;
       const poleTop = r.y - POLE_H - raise;
 
+      // The colour the ring throws into the room, normalised so a dim palette entry still
+      // lights its own pole and pennant at the same strength as a bright one.
+      const ringPeak = Math.max(ring[0], ring[1], ring[2], 1e-4);
+      const glowK = (0.30 + 0.55 * lit) * ringPeak;
+      const glowCol = new Float32Array([
+        (ring[0] / ringPeak) * glowK,
+        (ring[1] / ringPeak) * glowK,
+        (ring[2] / ringPeak) * glowK,
+      ]);
+
+      const poleCy = (poleTop + r.y + 2) / 2;
       const up = use(progs.pole);
       gl.uniform2f(up.uSize, POLE_W, POLE_H + raise + 2);
       gl.uniform3fv(up.uColor, new Float32Array(poleCol));
       gl.uniform1f(up.uLit, lit);
-      place(up, r.x, (poleTop + r.y + 2) / 2, POLE_W / 2 + 11, (POLE_H + raise + 2) / 2 + 11, 0);
+      gl.uniform3fv(up.uGlow, glowCol);
+      gl.uniform2f(up.uGlowAt, 0, r.y - poleCy);
+      place(up, r.x, poleCy, POLE_W / 2 + 11, (POLE_H + raise + 2) / 2 + 11, 0);
       drawQuad();
 
+      const flagCx = r.x + POLE_W * 0.35 + FLAG_W / 2;
+      const flagCy = poleTop + FLAG_H / 2 + 1;
       const uf = use(progs.flag);
       gl.uniform2f(uf.uSize, FLAG_W, FLAG_H);
       gl.uniform3fv(uf.uColor, new Float32Array(flagCol));
       gl.uniform1f(uf.uLit, lit);
-      place(uf, r.x + POLE_W * 0.35 + FLAG_W / 2, poleTop + FLAG_H / 2 + 1, FLAG_W / 2, FLAG_H / 2, 0);
+      gl.uniform3fv(uf.uGlow, glowCol);
+      gl.uniform2f(uf.uGlowAt, r.x - flagCx, r.y - flagCy);
+      place(uf, flagCx, flagCy, FLAG_W / 2, FLAG_H / 2, 0);
       drawQuad();
 
       const ur = use(progs.receptor);
@@ -1008,23 +1287,25 @@ export function createBoardRenderer(gl) {
       gl.uniform1f(ur.uLit, lit);
       gl.uniform1f(ur.uRadius, RECEPTOR_R);
       gl.uniform1f(ur.uStroke, RECEPTOR_STROKE);
-      const halo = RECEPTOR_R + 46;
-      place(ur, r.x, r.y, halo, halo, 0);
+      gl.uniform1f(ur.uTime, t || 0);
+      // The pool has to be wide enough to BE the floor light: nothing else shades the floor,
+      // and the reference's receptors tint 40+ css px of floor and wash the wall behind them.
+      place(ur, r.x, r.y, RECEPTOR_HALO, RECEPTOR_HALO, 0);
       drawQuad();
     }
   }
 
-  function drawMirror(x, y, angle, alpha, scaleK) {
-    const lit = opticIllumination(x, y);
+  function drawMirror(x, y, angle, alpha, scaleK, reject) {
+    const lit = reject ? { r: 0, g: 0, b: 0, amount: 0 } : opticIllumination(x, y);
     const u = use(progs.mirror);
     const hl = (MIRROR_LEN / 2) * scaleK;
     const rad = (MIRROR_T / 2) * scaleK;
     gl.uniform1f(u.uHalfLen, hl);
     gl.uniform1f(u.uRad, rad);
-    gl.uniform3fv(u.uBody, MIRROR_BODY);
-    gl.uniform3fv(u.uBack, MIRROR_BACK);
-    gl.uniform3fv(u.uSpec, MIRROR_SPEC);
-    gl.uniform3fv(u.uGlow, MIRROR_GLOW);
+    gl.uniform3fv(u.uBody, reject ? REJECT_BODY : MIRROR_BODY);
+    gl.uniform3fv(u.uBack, reject ? REJECT_BACK : MIRROR_BACK);
+    gl.uniform3fv(u.uSpec, reject ? REJECT_SPEC : MIRROR_SPEC);
+    gl.uniform3fv(u.uGlow, reject ? REJECT_GLOW : MIRROR_GLOW);
     gl.uniform3f(u.uLitColor, lit.r, lit.g, lit.b);
     gl.uniform1f(u.uLitAmount, lit.amount);
     gl.uniform1f(u.uAlpha, alpha);
@@ -1032,12 +1313,12 @@ export function createBoardRenderer(gl) {
     drawQuad();
   }
 
-  function drawPrism(x, y, angle, alpha, scaleK) {
-    const lit = opticIllumination(x, y);
+  function drawPrism(x, y, angle, alpha, scaleK, reject) {
+    const lit = reject ? { r: 0, g: 0, b: 0, amount: 0 } : opticIllumination(x, y);
     const u = use(progs.prism);
     const R = PRISM_R * scaleK;
     gl.uniform1f(u.uR, R);
-    gl.uniform3fv(u.uEdge, GLASS_EDGE);
+    gl.uniform3fv(u.uEdge, reject ? REJECT_EDGE : GLASS_EDGE);
     gl.uniform3f(u.uLitColor, lit.r, lit.g, lit.b);
     gl.uniform1f(u.uLitAmount, lit.amount);
     gl.uniform1f(u.uAlpha, alpha);
@@ -1045,20 +1326,21 @@ export function createBoardRenderer(gl) {
     drawQuad();
   }
 
-  function drawOptic(o, alpha, scaleK) {
-    if (o.type === 'prism') drawPrism(o.x, o.y, o.angle || 0, alpha, scaleK);
-    else drawMirror(o.x, o.y, o.angle || 0, alpha, scaleK);
+  function drawOptic(o, alpha, scaleK, reject) {
+    if (o.type === 'prism') drawPrism(o.x, o.y, o.angle || 0, alpha, scaleK, reject);
+    else drawMirror(o.x, o.y, o.angle || 0, alpha, scaleK, reject);
   }
 
-  function drawProtractor(o, scaleK, snapping) {
+  function drawProtractor(o, scaleK, grabbed) {
     const a = normAngle(o.angle || 0);
     const R = RING_R * scaleK;
     const u = use(progs.protractor);
     gl.uniform1f(u.uR, R);
     gl.uniform3fv(u.uColor, PROTRACTOR);
+    gl.uniform3fv(u.uHandleFill, HANDLE_FILL);
     gl.uniform2f(u.uHandle, Math.cos(a) * R, -Math.sin(a) * R);
     gl.uniform1f(u.uAlpha, scaleK);
-    gl.uniform1f(u.uSnap, snapping ? 1 : 0);
+    gl.uniform1f(u.uGrab, grabbed ? 1 : 0);
     place(u, o.x, o.y, R + 30, R + 30, 0);
     drawQuad();
 
@@ -1099,7 +1381,7 @@ export function createBoardRenderer(gl) {
 
     drawWalls(level);
     drawEmitter(level);
-    drawReceptors(level, dt);
+    drawReceptors(level, dt, t);
 
     const nowMs = t * 1000;
     for (const o of list) {
@@ -1112,17 +1394,27 @@ export function createBoardRenderer(gl) {
       drawOptic(o, 0.35 + 0.65 * ease, scaleK);
     }
 
-    const ghost = state && (state.ghost || (state.dragging && typeof state.dragging === 'object'
-      && state.dragging.x !== undefined ? state.dragging : null));
+    // A rotate drag never needs a ghost: the real optic is already under the pointer, and
+    // drawing a second copy at the drag's stale angle doubled the sprite mid-rotation.
+    const drag0 = state && state.dragging;
+    const ghost = state && (state.ghost || (drag0 && typeof drag0 === 'object'
+      && drag0.kind !== 'rotate' && drag0.x !== undefined ? drag0 : null));
     if (ghost && ghost.type) {
-      drawOptic(ghost, ghost.valid === false ? 0.20 : 0.42, 0.94);
+      const bad = ghost.valid === false;
+      // A refusal has to be readable as "not here", so the whole silhouette goes red and the
+      // aura is fitted to the optic's own footprint. A 26 u point glow on a 110 u mirror was
+      // a red dot on an otherwise normal sprite — it read as a status LED, not a rejection.
+      drawOptic(ghost, bad ? 0.34 : 0.42, 0.94, bad);
+      const ga = normAngle(ghost.angle || 0);
+      const span = ghost.type === 'prism' ? 0 : (MIRROR_LEN / 2) * 0.82;
+      const halo = ghost.type === 'prism' ? PRISM_R + 16 : MIRROR_T / 2 + 26;
       const ug = use(progs.glow);
-      gl.uniform2f(ug.uSpan, 0, 0);
-      gl.uniform1f(ug.uRadius, 26);
-      gl.uniform1f(ug.uPower, 3.2);
-      if (ghost.valid === false) gl.uniform3f(ug.uColor, 0.36, 0.05, 0.05);
+      gl.uniform2f(ug.uSpan, Math.cos(ga) * span, -Math.sin(ga) * span);
+      gl.uniform1f(ug.uRadius, halo);
+      gl.uniform1f(ug.uPower, bad ? 2.1 : 3.2);
+      if (bad) gl.uniform3f(ug.uColor, 0.15, 0.018, 0.016);
       else gl.uniform3f(ug.uColor, 0.11, 0.13, 0.18);
-      place(ug, ghost.x, ghost.y, 28, 28, 0);
+      place(ug, ghost.x, ghost.y, span + halo + 4, span + halo + 4, 0);
       drawQuad();
     }
 
@@ -1133,7 +1425,9 @@ export function createBoardRenderer(gl) {
         const age = nowMs - (bornAt.has(sel.id) ? bornAt.get(sel.id) : nowMs);
         const p = Math.min(Math.max(age / PLACE_MS, 0), 1);
         const ease = 1 - Math.pow(1 - p, 3);
-        drawProtractor(sel, 0.72 + 0.28 * ease, !(state && state.shift));
+        const drag = state && state.dragging;
+        const grabbed = !!(drag && typeof drag === 'object' && drag.kind === 'rotate' && drag.id === sel.id);
+        drawProtractor(sel, 0.72 + 0.28 * ease, grabbed);
       }
     }
 

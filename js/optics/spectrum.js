@@ -245,7 +245,73 @@ export function sampleWavelengths(count) {
   return out;
 }
 
-// Acceptance windows for coloured receptors, in nanometres.
+// --- render palette ------------------------------------------------------------------
+//
+// A dispersion fan is not a set of hues laid side by side; it is an integral. Every pixel
+// of a real fan receives a BAND of wavelengths whose width is set by the incident beam's
+// own width, and the colour it shows is the CIE integral over that band. Near the prism
+// the band is the whole visible spectrum and the pixel is grey; only far enough out that
+// the beam width no longer covers the whole angular spread do hues separate.
+//
+// Because CIE XYZ is linear in spectral power, that integral is exactly what additive
+// blending of per-wavelength linear-RGB splats computes for free -- PROVIDED the summed
+// palette is neutral. It is not: `nmToLinearRGB` compresses each wavelength's brightness
+// with BRIGHT_GAMMA so the deep violet and deep red stay visible, and that compression is
+// non-linear, so an equal-energy sum over the whole locus comes out (0.234, 0.443, 0.284)
+// -- a heavy green cast. Summing 48 such samples produced the vivid green slab that the
+// reference does not contain. RENDER_GAIN is the one von Kries balance that makes the
+// full-spectrum sum land on exactly (1, 1, 1): full overlap is then neutral by
+// construction, at any sample count, and green -- which always has neighbours on both
+// sides -- can never run away.
+const RENDER_INTEGRAL_SAMPLES = 512;
+
+// The second half of the same problem is the fan's ENDS. `nmToLinearRGB` lifts 380 nm and
+// 700 nm to full visibility on purpose, because a receptor flag or a legend swatch has to
+// show a violet you can actually see. A dispersion fan must not: the eye's response at the
+// wings is four orders of magnitude below its peak, which is why REFERENCE.md 5.1 measures
+// value 0.02 at the violet edge and 0.07 at the red edge against 0.44 in the middle. Left
+// at full brightness the wings put a saturated amber rail and a saturated violet rail down
+// both sides of the wedge at every radius, and no amount of overlap in the middle hides
+// them. Weighting the render palette by a compressed photopic curve restores the taper
+// without touching the colours the rest of the game reads.
+const RENDER_WING_TAPER = 0.35;
+
+function renderWingWeight(nm) {
+  return Math.pow(Math.max(cieY(nm), 1e-7), RENDER_WING_TAPER);
+}
+
+const RENDER_GAIN = (() => {
+  const s = sampleWavelengths(RENDER_INTEGRAL_SAMPLES);
+  const acc = new Float64Array(3);
+  const tmp = new Float64Array(3);
+  for (let i = 0; i < s.length; i++) {
+    nmToLinearRGBInto(tmp, s[i]);
+    const w = renderWingWeight(s[i]);
+    acc[0] += tmp[0] * w;
+    acc[1] += tmp[1] * w;
+    acc[2] += tmp[2] * w;
+  }
+  const n = s.length;
+  return [n / Math.max(acc[0], 1e-6), n / Math.max(acc[1], 1e-6), n / Math.max(acc[2], 1e-6)];
+})();
+
+// Linear sRGB for one wavelength, scaled so that the mean over a full perceptually
+// uniform sweep of the visible band is exactly (1, 1, 1).
+export function nmToRenderRGBInto(out, nm) {
+  nmToLinearRGBInto(out, nm);
+  const w = renderWingWeight(nm);
+  out[0] *= RENDER_GAIN[0] * w;
+  out[1] *= RENDER_GAIN[1] * w;
+  out[2] *= RENDER_GAIN[2] * w;
+  return out;
+}
+
+export function nmToRenderRGB(nm) {
+  const out = new Float64Array(3);
+  nmToRenderRGBInto(out, nm);
+  return [out[0], out[1], out[2]];
+}
+
 // Acceptance windows for coloured receptors, in nanometres. The boundaries are pushed
 // toward equal shares of the perceptual arc so that every colour owns a comparable slice
 // of the fan's angle and of the traced samples: a band that owns 4 of 48 samples can never

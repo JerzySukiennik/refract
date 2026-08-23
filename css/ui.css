@@ -39,14 +39,25 @@
   --font: 'Share Tech Mono', 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
   --fs-title: clamp(15px, calc(var(--board-size) * 0.0317), 27px);
   --fs-micro: clamp(7px, calc(var(--board-size) * 0.0123), 12px);
+  /* Buttons are the one micro role the reference sets SMALLER than the rest: cap 4.5 px
+     against the 5 px of every other small label (REFERENCE 3, "Measured metrics"). At the
+     565.89 px board of the capture harness this resolves to 6.25 px. */
+  --fs-btn: clamp(5.5px, calc(var(--board-size) * 0.01104), 11px);
   --fs-small: clamp(8.5px, calc(var(--board-size) * 0.0150), 14px);
   --fs-solved: clamp(28px, calc(var(--board-size) * 0.0563), 54px);
 
   /* The smaller the text, the wider the tracking. */
   --tr-title: 0.21em;
   --tr-micro: 0.47em;
+  /* Measured off ref_001: glyph advance in RESET/HINT/LEVELS/SOUND is 4.7 px at a 4.5 px
+     cap, i.e. 0.75 em total advance — 0.21 em of tracking on top of the 0.54 em face. */
+  --tr-btn: 0.21em;
   --tr-small: 0.34em;
   --tr-hint: 0.30em;
+  /* The dock label is the one 7 px role the reference tracks TIGHT: measured advance across
+     MIRROR in ref_001 is 4.6 px, so the whole word clears the 53 px tile with 12 px of air
+     each side. At --tr-micro it overran the tile's own border. */
+  --tr-tile: 0.15em;
 
   /* Rhythm */
   --inset: clamp(12px, 2.08vw, 26px);
@@ -150,7 +161,10 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   position: absolute;
   left: var(--inset);
   right: var(--inset);
-  top: max(calc(var(--inset) * 0.62), env(safe-area-inset-top));
+  /* REFERENCE 1.4: the button row's border box starts at y = 13 px in a 694 px frame, and
+     --inset resolves to 15 px there, so 0.867 * inset lands it exactly without pinning the
+     chrome to one viewport size. */
+  top: max(calc(var(--inset) * 0.867), env(safe-area-inset-top));
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
@@ -159,10 +173,19 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 /* ---------- title block ---------- */
 
-.title-block { margin: 0; min-width: 0; }
+/* REFERENCE 1.4: LEVEL nn cap band y 16-20, title cap band y 31-43, 23 px baseline to
+   baseline. The chip row above starts at 13 px, so the tag needs a little air over it and
+   the two lines need a wider gap than the default leading gives. */
+.title-block {
+  margin: 0;
+  min-width: 0;
+  /* Measured drop: puts the LEVEL nn cap band on y 16-20 and the title's on y 31-43, the
+     reference's own rhythm, with the chip row's border box still starting at y 13. */
+  margin-top: calc(var(--inset) * 0.2);
+}
 
 .level-tag {
-  margin: 0 0 0.45em;
+  margin: 0 0 0.81em;
   font-size: var(--fs-micro);
   letter-spacing: var(--tr-micro);
   color: var(--ink-tag);
@@ -196,7 +219,8 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 5px;
+  /* 3 px between border boxes, measured between the four reference chips. */
+  gap: clamp(2px, calc(var(--board-size) * 0.0053), 6px);
   pointer-events: auto;
 }
 
@@ -204,15 +228,19 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   position: relative;
   appearance: none;
   font: inherit;
-  font-size: var(--fs-micro);
-  letter-spacing: var(--tr-micro);
-  text-indent: var(--tr-micro);
+  font-size: var(--fs-btn);
+  letter-spacing: var(--tr-btn);
+  /* No indent compensation: the reference label is left-biased inside its box (ink starts
+     5 px from the border, ends 8 px from the far one — the trailing track is left in). */
+  text-indent: 0;
   color: var(--ink-mid);
   background: var(--fill-chip);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 0.42em 0.62em 0.42em 0.5em;
-  line-height: 1.05;
+  /* Hugs the label horizontally, generous vertically: 5 px sides, 3.9 px top and bottom at
+     the 6.25 px reference size, landing RESET on 35 x 16 px. */
+  padding: 0.62em 0.8em;
+  line-height: 1;
   transition: color var(--t-fast) var(--ease),
               border-color var(--t-fast) var(--ease),
               background-color var(--t-fast) var(--ease),
@@ -251,24 +279,15 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   border-color: rgba(237, 185, 80, 0.42);
 }
 
-.chip-dot {
-  display: inline-block;
-  width: 3px;
-  height: 3px;
-  margin-right: 0.55em;
-  border-radius: 50%;
-  background: var(--ink-mid);
-  vertical-align: middle;
-  transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+/* The sound chip carries its state in the label — SOUND / MUTED, five glyphs either way —
+   rather than in an inline LED. The dot cost 7 px of row width on a 36 px box and was the
+   only blue in the whole top strip; swapping the word is both narrower and louder. */
+.chip-sound[aria-pressed="false"] {
+  color: var(--ink-tag);
+  border-color: var(--line-soft);
 }
 
-.chip-sound[aria-pressed="true"] .chip-dot {
-  background: var(--accent);
-  box-shadow: 0 0 6px rgba(70, 150, 231, 0.8);
-}
-
-.chip-sound[aria-pressed="false"] { color: var(--ink-tag); }
-.chip-sound[aria-pressed="false"] .chip-dot { background: #35323a; box-shadow: none; }
+.chip-sound[aria-pressed="false"]:hover { color: var(--ink-soft); border-color: var(--line); }
 
 /* ---------- hint strip under the board ---------- */
 
@@ -279,7 +298,7 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 .hint-line {
   position: absolute;
   left: 50%;
-  bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--tile-h) + 4px);
+  bottom: calc(max(var(--inset), env(safe-area-inset-bottom)) + var(--tile-h) + 4px);
   transform: translateX(-50%);
   margin: 0;
   /* max() floors the width: --board-size is written from the render transform, and a
@@ -319,17 +338,22 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   position: absolute;
   left: var(--inset);
   right: var(--inset);
-  bottom: max(8px, env(safe-area-inset-bottom));
+  /* REFERENCE 1.4: the dock's bottom edge sits 16 px off the frame bottom (y 634-678 in a
+     694 px frame), which also puts it 13 px below the board. */
+  bottom: max(var(--inset), env(safe-area-inset-bottom));
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   column-gap: clamp(10px, 2.4vw, 26px);
 }
 
+/* Anchored to the frame's left margin so it mirrors the title block's inset instead of
+   floating half-way to the dock with the whole right third empty. Four corners: title,
+   chips, readout, and the dock centred between them. */
 .readout {
   grid-column: 1;
-  justify-self: end;
-  text-align: right;
+  justify-self: start;
+  text-align: left;
   white-space: nowrap;
   margin: 0;
   font-size: var(--fs-micro);
@@ -359,11 +383,9 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   width: var(--tile-w);
   height: var(--tile-h);
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5em;
+  /* REFERENCE 1.4: the icon is centred on the tile (icon centre y656 in a 634-678 tile) and
+     the label is tucked against the bottom edge, not stacked with it in a centred column. */
+  display: block;
   background: var(--fill-tile);
   border: 1px solid var(--line);
   border-radius: var(--radius-tile);
@@ -376,8 +398,13 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 }
 
 .dock-tile .glyph {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: block;
-  width: 58%;
+  /* Reference mirror bar measures 26 x 5 px inside a 53 px tile. */
+  width: 72%;
   height: auto;
   overflow: visible;
   transition: opacity var(--t-fast) var(--ease), transform var(--t-mid) var(--ease);
@@ -397,9 +424,14 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 }
 
 .dock-tile .tile-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.29em;
+  text-align: center;
   font-size: var(--fs-micro);
-  letter-spacing: var(--tr-micro);
-  text-indent: var(--tr-micro);
+  letter-spacing: var(--tr-tile);
+  text-indent: 0;
   line-height: 1;
 }
 
@@ -561,10 +593,12 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 .btn {
   appearance: none;
   font: inherit;
-  font-size: var(--fs-micro);
-  letter-spacing: var(--tr-micro);
-  text-indent: var(--tr-micro);
-  padding: 0.72em 1.05em 0.72em 0.95em;
+  font-size: var(--fs-btn);
+  letter-spacing: var(--tr-btn);
+  text-indent: 0;
+  /* REFERENCE 9.3: FREE PLAY is 71 x 20 px — the same label size as a chip inside far more
+     generous padding (12 px sides, 5.9 px top and bottom). */
+  padding: 0.94em 2.12em;
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: transparent;
@@ -578,6 +612,12 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 
 .btn:hover { color: var(--ink-title); border-color: #56525c; background: #121019; }
 .btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(70, 150, 231, 0.35); }
+.btn-primary:focus-visible { border-color: var(--white); box-shadow: 0 0 0 2px rgba(8, 6, 12, 0.9), 0 0 0 3px rgba(245, 244, 246, 0.55); }
+
+/* The panel takes the opening focus (js/ui/modals.js), so the win screen's hero button is
+   never painted in a focus colour it did not earn. */
+.panel:focus,
+.panel:focus-visible { outline: none; }
 
 .btn-primary {
   background: #f5f4f6;
@@ -595,12 +635,14 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 .btn:disabled { opacity: 0.35; }
 .btn:disabled:hover { color: var(--ink-mid); border-color: var(--line); background: transparent; }
 
+/* The only heading a panel gets, so it has to clear the panel fill: --ink-dim on
+   --fill-panel is 3.4:1, where the old --ink-tag was 2.4:1. */
 .panel-head {
   margin: 0 0 1.6em;
   font-size: var(--fs-micro);
   letter-spacing: var(--tr-micro);
   text-indent: var(--tr-micro);
-  color: var(--ink-tag);
+  color: var(--ink-dim);
   line-height: 1;
 }
 
@@ -651,7 +693,7 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   margin-top: auto;
   font-size: var(--fs-micro);
   letter-spacing: 0.2em;
-  color: var(--ink-mute);
+  color: var(--ink-tag);
   line-height: 1;
 }
 
@@ -661,8 +703,12 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 .level-cell.is-done .cell-score { color: #6fbf7a; }
 .level-cell.is-best .cell-score { color: var(--amber); }
 .level-cell.is-current { border-color: var(--accent); color: var(--ink-title); }
-.level-cell.is-locked { opacity: 0.34; }
-.level-cell.is-locked .cell-name { color: var(--ink-mute); }
+/* 23 of 24 cells are locked on a first run, so this opacity decides whether the grid is a
+   list or a smudge. At 0.34 the names composited to ~#111 on the panel — 1.2:1. */
+.level-cell.is-locked { opacity: 0.62; }
+.level-cell.is-locked .cell-name { color: var(--ink-dim); }
+.level-cell.is-locked .cell-no,
+.level-cell.is-locked .cell-score { color: var(--ink-tag); }
 .level-cell:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(70, 150, 231, 0.35); }
 
 /* forms */
@@ -818,7 +864,12 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
   :root {
     --fs-micro: clamp(9.5px, calc(var(--board-size) * 0.0145), 13px);
     --fs-small: clamp(11px, calc(var(--board-size) * 0.018), 15px);
+    /* Fingers need a bigger target than the reference's 16 px chip. */
+    --fs-btn: clamp(8.5px, calc(var(--board-size) * 0.0132), 12px);
   }
+
+  /* ~28 px tall, which is a tappable chip rather than a photographable one. */
+  .chip { padding: 0.95em 1em; }
 }
 
 @media (max-width: 620px) {
@@ -833,8 +884,8 @@ html[data-cursor-mode="dom"] * { cursor: none !important; }
 }
 
 @media (max-width: 420px) {
-  .chip-row { gap: 4px; }
-  .chip { padding: 0.4em 0.5em 0.4em 0.4em; }
+  .chip-row { gap: 3px; }
+  .chip { padding: 0.55em 0.62em; }
 }
 
 @media (max-height: 560px) {

@@ -1,11 +1,19 @@
 // Instanced additive beam renderer: every traced ray segment becomes one expanded
 // capsule quad, shaded in linear HDR with a flat-top core, handed warm/cool fringe,
 // animated longitudinal grain and round end caps.
+//
+// The spectral path is deliberately NOT a set of tinted hairlines. Each wavelength is
+// splatted at the SAME transverse width as the white beam it came from, in a palette
+// balanced so that a full-spectrum sum is exactly neutral (spectrum.js RENDER_GAIN).
+// Additive blending of those splats then performs the CIE integral per pixel: near the
+// prism, where the whole spectrum still overlaps, the fan comes out grey for free, and
+// hues separate only once the angular spread exceeds the beam width. That is
+// REFERENCE.md 5.2 -- the one thing a hue-ramp implementation cannot reproduce.
 
 import { createProgram, getTransform } from './gl.js';
-import { nmToLinearRGB } from '../optics/spectrum.js';
+import { nmToRenderRGB } from '../optics/spectrum.js';
 
-const FLOATS_PER_INSTANCE = 12;
+const FLOATS_PER_INSTANCE = 13;
 const INSTANCE_STRIDE = FLOATS_PER_INSTANCE * 4;
 
 // Everything the reference measured is in pixels of a 720x694 frame whose board->pixel
@@ -17,18 +25,27 @@ const INSTANCE_STRIDE = FLOATS_PER_INSTANCE * 4;
 const REFERENCE_SCALE = 0.568;
 const FRINGE_OFFSET_PX = 2.6;   // REFERENCE.md 4.2: R shifted +2.6 px, B shifted -2.6 px
 const PROFILE_EDGE_PX = 26.0;   // REFERENCE.md 4.1: v = 1 sits 26 px off the centreline
+const BEAM_HALF_WIDTH = PROFILE_EDGE_PX / REFERENCE_SCALE;
 
 const DEFAULTS = {
-  whiteGain: 1.15,
-  whiteHalfWidth: PROFILE_EDGE_PX / REFERENCE_SCALE,
-  spectralGain: 1.15,
-  spectralHalfWidth: 16.0,
-  spectralGrow: 0.006,
-  spectralCompRef: 520.0,
-  spectralCompMax: 3.2,
+  whiteGain: 0.40,
+  whiteHalfWidth: BEAM_HALF_WIDTH,
+  spectralGain: 0.18,
+  // A dispersed ray is the same beam, only narrower in wavelength: it keeps the width of
+  // the beam that entered the glass. Anything thinner stops neighbouring wavelengths
+  // overlapping, and the fan degenerates into a saturated hue ramp with a knife-edge
+  // between red and green -- which is exactly what it used to do at 16 u.
+  spectralHalfWidth: BEAM_HALF_WIDTH * 1.5,
+  spectralGrow: 0.012,
+  spectralCompRef: 620.0,
+  spectralCompMax: 1.35,
+  // Inside the glass the path is a faint guide line, not a beam: REFERENCE.md 6.2 wants
+  // one thin internal line with the body of the prism staying almost transparent.
+  insideHalfWidth: 5.0,
+  insideGain: 0.20,
   fringeOffsetPx: FRINGE_OFFSET_PX,
-  fringeChroma: 1.3,
-  grainAmount: 0.133,
+  fringeChroma: 0.70,
+  grainAmount: 0.27,
   grainDrift: 26.0,
   hotRadius: 22.0,
   hotGain: 0.55,
@@ -48,13 +65,16 @@ layout(location = 0) in vec2 aCorner;
 layout(location = 1) in vec4 aEnds;
 layout(location = 2) in vec3 aColor;
 layout(location = 3) in vec3 aParams;
-layout(location = 4) in vec2 aHot;
+layout(location = 4) in vec3 aHot;
 
 uniform mat4 uViewProj;
 uniform float uWhiteHalfWidth;
 uniform float uSpecHalfWidth;
+uniform float uInsideHalfWidth;
 uniform float uSpecGrow;
 uniform float uFringeOffset;
+
+const float PROFILE_EXTENT = 1.25;
 
 out float vAlong;
 out float vAcross;
@@ -64,6 +84,7 @@ flat out float vGrow;
 flat out vec3 vColor;
 flat out float vIntensity;
 flat out float vSpectral;
+flat out float vInside;
 flat out vec2 vHot;
 flat out float vSeed;
 
@@ -76,13 +97,15 @@ void main() {
   vec2 nrm = vec2(-dir.y, dir.x);
 
   float spectral = aParams.y;
+  float inside = aHot.z;
   float hw0 = mix(uWhiteHalfWidth, uSpecHalfWidth, spectral);
-  float grow = uSpecGrow * spectral;
+  hw0 = mix(hw0, uInsideHalfWidth, inside);
+  float grow = uSpecGrow * spectral * (1.0 - inside);
   float fringeMargin = uFringeOffset * (1.0 - spectral) * 1.6;
 
   float along = aCorner.x * len;
   float hw = hw0 + grow * along;
-  float margin = hw + fringeMargin;
+  float margin = hw * PROFILE_EXTENT + fringeMargin;
 
   float axial = along + (aCorner.x * 2.0 - 1.0) * margin;
   float lateral = aCorner.y * margin;
@@ -97,7 +120,8 @@ void main() {
   vColor = aColor;
   vIntensity = aParams.x;
   vSpectral = spectral;
-  vHot = aHot;
+  vInside = inside;
+  vHot = aHot.xy;
   vSeed = fract(dot(p0, vec2(0.0173, 0.0311)) + dot(p1, vec2(0.0071, 0.0129))) * 37.0;
 
   gl_Position = uViewProj * vec4(pos, 0.0, 1.0);
@@ -115,12 +139,14 @@ flat in float vGrow;
 flat in vec3 vColor;
 flat in float vIntensity;
 flat in float vSpectral;
+flat in float vInside;
 flat in vec2 vHot;
 flat in float vSeed;
 
 uniform float uTime;
 uniform float uWhiteGain;
 uniform float uSpecGain;
+uniform float uInsideGain;
 uniform float uSpecCompRef;
 uniform float uSpecCompMax;
 uniform float uFringeOffset;
@@ -131,6 +157,8 @@ uniform float uHotRadius;
 uniform float uHotGain;
 
 out vec4 outColor;
+
+const float PROFILE_EXTENT = 1.25;
 
 float hash21(vec2 p) {
   vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -155,9 +183,19 @@ float capsuleDist(float along, float across, float len) {
   return sqrt(da * da + across * across);
 }
 
+// Inverse-tonemapping the reference column (ref_001.jpg x = 400) back to scene-linear
+// radiance fits a super-gaussian, exp(-(k|v|)^n): smooth and non-zero everywhere inside
+// the quad. That property matters more than the exponents. The old profile was a flat top
+// with compact support, so the +/-2.6 px per-channel offsets could only differ across the
+// one steep pixel band at |v| = 1 and stroked two saturated rails there; a profile whose
+// slope is spread over the whole shoulder tints the whole falloff instead, which is what
+// the reference does.
 float beamProfile(float v, float soft) {
-  float a = 1.0 - pow(min(abs(v), 1.0), mix(1.9, 1.25, soft));
-  return pow(max(a, 0.0), mix(1.35, 1.9, soft));
+  float a = abs(v);
+  float k = mix(1.98, 2.05, soft);
+  float n = mix(2.14, 1.90, soft);
+  float p = exp(-pow(max(a * k, 1e-4), n));
+  return p * (1.0 - smoothstep(PROFILE_EXTENT - 0.45, PROFILE_EXTENT, a));
 }
 
 void main() {
@@ -171,9 +209,13 @@ void main() {
   if (vSpectral > 0.5) {
     float d = capsuleDist(vAlong, vAcross, vLen);
     float p = beamProfile(d * invHw, 1.0);
-    if (p <= 0.0) discard;
+    if (p <= 1e-5) discard;
+    // The wedge widens as it travels, so a fixed per-sample energy would read as a beam
+    // fading out. REFERENCE.md 5.3: the reference wedge is close to constant brightness
+    // over the whole board, dimming only ~14 % across 200 px.
     float comp = 1.0 + uSpecCompMax * min(axialClamped / max(uSpecCompRef, 1.0), 1.0);
-    energy = vColor * (p * uSpecGain * vIntensity * comp);
+    float gain = mix(uSpecGain * comp, uInsideGain, vInside);
+    energy = vColor * (p * gain * vIntensity);
     coreness = p;
   } else {
     // vAcross is already signed by the ray's own transverse frame, so shifting R to the
@@ -188,7 +230,7 @@ void main() {
       beamProfile(dG * invHw, 0.0),
       beamProfile(dB * invHw, 0.0)
     );
-    if (p.r + p.g + p.b <= 0.0) discard;
+    if (p.r + p.g + p.b <= 3e-5) discard;
     float m = (p.r + p.g + p.b) * (1.0 / 3.0);
     p = max(m + (p - m) * uFringeChroma, vec3(0.0));
     energy = vColor * p * (uWhiteGain * vIntensity);
@@ -237,13 +279,23 @@ function toMat4(m) {
 
 function hotStart(seg) {
   if (seg.generation === 0) return 1.0;
-  return 0.14;
+  // The first thing that happens inside the glass is the entry face lighting up, which is
+  // where the reference prism reads brightest (REFERENCE.md 6.2).
+  if (seg.inside) return 0.85;
+  return seg.nm ? 0.16 : 0.5;
 }
 
+// A fold is a bounce, and a bounce is where the reference flares. `terminal === null` is
+// the tracer's word for "the ray carries on" - a mirror face or a glass interface - so the
+// incoming segment's end and the outgoing segment's start both get a hot spot there and
+// the two overlap into the chevron the reference shows at every mirror. Spectral segments
+// keep only a token flare: a fan crosses many interfaces and would otherwise pick up a
+// bead at each one.
 function hotEnd(seg) {
   const t = seg.terminal;
   if (typeof t === 'string' && t.indexOf('receptor') === 0) return 0.9;
   if (t === 'wall') return 0.12;
+  if (t === null || t === undefined) return seg.nm ? 0.16 : 0.5;
   return 0.0;
 }
 
@@ -255,9 +307,11 @@ export function createBeamRenderer(gl) {
     time: gl.getUniformLocation(program, 'uTime'),
     whiteHalfWidth: gl.getUniformLocation(program, 'uWhiteHalfWidth'),
     specHalfWidth: gl.getUniformLocation(program, 'uSpecHalfWidth'),
+    insideHalfWidth: gl.getUniformLocation(program, 'uInsideHalfWidth'),
     specGrow: gl.getUniformLocation(program, 'uSpecGrow'),
     whiteGain: gl.getUniformLocation(program, 'uWhiteGain'),
     specGain: gl.getUniformLocation(program, 'uSpecGain'),
+    insideGain: gl.getUniformLocation(program, 'uInsideGain'),
     specCompRef: gl.getUniformLocation(program, 'uSpecCompRef'),
     specCompMax: gl.getUniformLocation(program, 'uSpecCompMax'),
     fringeOffset: gl.getUniformLocation(program, 'uFringeOffset'),
@@ -299,7 +353,7 @@ export function createBeamRenderer(gl) {
   gl.vertexAttribPointer(3, 3, gl.FLOAT, false, INSTANCE_STRIDE, 28);
   gl.vertexAttribDivisor(3, 1);
   gl.enableVertexAttribArray(4);
-  gl.vertexAttribPointer(4, 2, gl.FLOAT, false, INSTANCE_STRIDE, 40);
+  gl.vertexAttribPointer(4, 3, gl.FLOAT, false, INSTANCE_STRIDE, 40);
   gl.vertexAttribDivisor(4, 1);
 
   gl.bindVertexArray(null);
@@ -316,7 +370,7 @@ export function createBeamRenderer(gl) {
     const key = Math.round(nm * 4) * 0.25;
     let c = colorCache.get(key);
     if (!c) {
-      const rgb = nmToLinearRGB(key);
+      const rgb = nmToRenderRGB(key);
       c = [rgb[0], rgb[1], rgb[2]];
       colorCache.set(key, c);
     }
@@ -372,6 +426,7 @@ export function createBeamRenderer(gl) {
       data[w + 9] = perp;
       data[w + 10] = hotStart(s);
       data[w + 11] = hotEnd(s);
+      data[w + 12] = s.inside ? 1.0 : 0.0;
       w += FLOATS_PER_INSTANCE;
     }
 
@@ -403,9 +458,11 @@ export function createBeamRenderer(gl) {
     g.uniform1f(uni.time, time || 0);
     g.uniform1f(uni.whiteHalfWidth, params.whiteHalfWidth);
     g.uniform1f(uni.specHalfWidth, params.spectralHalfWidth);
+    g.uniform1f(uni.insideHalfWidth, params.insideHalfWidth);
     g.uniform1f(uni.specGrow, params.spectralGrow);
     g.uniform1f(uni.whiteGain, params.whiteGain);
     g.uniform1f(uni.specGain, params.spectralGain);
+    g.uniform1f(uni.insideGain, params.insideGain);
     g.uniform1f(uni.specCompRef, params.spectralCompRef);
     g.uniform1f(uni.specCompMax, params.spectralCompMax);
     g.uniform1f(uni.fringeOffset, unitsFromPx(params.fringeOffsetPx));

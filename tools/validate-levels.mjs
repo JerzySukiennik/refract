@@ -38,7 +38,12 @@ const flag = (name, fallback) => {
   const hit = args.find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : fallback;
 };
-const budget = Number(flag('budget', 20000));
+// Per-level budget for the hunt for a solution SHORTER than par. It has to be large enough
+// that the deepest board exhausts its own search space rather than running out the clock:
+// "no shortcut found" and "no shortcut exists in the searched space" are different claims,
+// and only the second one confirms a par. The worst case today is 23 THE LONG WAY DOWN, the
+// only par-5 level, which exhausts at ~32 s; 45 s leaves headroom without dragging the run out.
+const budget = Number(flag('budget', 45000));
 const only = flag('level', null);
 const quiet = args.includes('--quiet');
 

@@ -22,7 +22,15 @@ export const TRACE_DEFAULTS = {
   maxBounces: 64,
   maxSegments: 4000,
   receptorThreshold: 0.06,
-  minIntensity: 0.0015,
+  // REFERENCE.md 5.4: a real prism emits THREE things -- the primary fan, a weaker
+  // secondary fan with REVERSED hue order, and a narrow neutral residual. The secondary
+  // is the light that Fresnel-reflects off the inside of the exit face and leaves through
+  // another one. At 1/spectralSamples per ray times a ~5 % internal reflectance that
+  // branch lands near 1e-3, so a 1.5e-3 floor pruned the entire secondary fan out of
+  // existence and left the prism reading as a rainbow dispenser. The floor now sits just
+  // under the renderer's own 4e-4 visibility cutoff, so nothing survives that cannot be
+  // seen and nothing visible is thrown away.
+  minIntensity: 0.0004,
   mirrorLength: 110,
   prismSide: 75,
   receptorRadius: 22,
@@ -429,7 +437,17 @@ export function traceScene(level, optics, opts) {
     cast(ox, oy, dx, dy, inside);
 
     if (hitKind === KIND_NONE) {
-      segments.push(seg(ox, oy, ox + dx * FAR, oy + dy * FAR, nm, intensity, gen, 'escape', inside >= 0, perp));
+      if (inside >= 0) {
+        // A ray flagged as inside the glass with no face ahead of it has left through the
+        // exact vertex where two faces meet -- the one geometric singularity a triangle
+        // has, and reachable in play because rotation snaps to 5 degrees and a prism at
+        // 0, 60 or 120 degrees sends a horizontal beam straight into its apex. Left alone
+        // it flew the whole board still marked as glass, so every sample drew as a thin
+        // hairline instead of a fan. Re-cast it as a ray in open air from the same point.
+        push(ox, oy, dx, dy, nm, intensity, gen + 1, -1, perp, minI);
+        continue;
+      }
+      segments.push(seg(ox, oy, ox + dx * FAR, oy + dy * FAR, nm, intensity, gen, 'escape', false, perp));
       if (recCount > 0 && inside < 0) measure(level, ox, oy, dx, dy, FAR, nm, intensity, acceptK, halfW);
       energyTerminated += intensity;
       continue;

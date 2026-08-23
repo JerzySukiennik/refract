@@ -477,12 +477,17 @@ test('tracing is deterministic and fast enough', () => {
     const y = b.segments[i];
     ok(x.ax === y.ax && x.by === y.by && x.nm === y.nm && x.intensity === y.intensity, `segment ${i} differs`);
   }
+  // The very first traces in a process run interpreted, before the JIT has tiered up the
+  // cast/push loop, and they cost 3-4 ms against a warm cost near 0.3 ms. In the game the
+  // tracer is warm long before a player can place anything, so timing a cold call measures
+  // the JIT, not the tracer. Warm up first, then time steady state against the same bound.
+  for (let i = 0; i < 20; i++) traceScene(prismLevel, prismOptics, { spectralSamples: 48 });
   let worst = 0;
   for (let i = 0; i < 40; i++) {
     const r = traceScene(prismLevel, prismOptics, { spectralSamples: 48 });
     worst = Math.max(worst, r.stats.ms);
   }
-  console.log(`      slowest of 40 traces: ${worst.toFixed(3)} ms`);
+  console.log(`      slowest of 40 warm traces: ${worst.toFixed(3)} ms`);
   ok(worst < 3, `slowest 48-sample trace was ${worst.toFixed(3)} ms`);
 });
 

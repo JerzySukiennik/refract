@@ -38,6 +38,19 @@ const PROFILES = [
 ];
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+// The tracer's own floor is set for the RENDERER: it keeps light down to 4e-4 so the prism's
+// faint secondary fan stays visible. Exploration does not need that light -- a receptor needs
+// 0.06 to latch, so a branch that faint cannot decide a board on its own -- and carrying it
+// costs roughly 3x the trace time, which is budget the search spends far better on nodes.
+// Explore coarse, then confirm every hit at the caller's real floor (see `confirms`).
+const SEARCH_MIN_INTENSITY = 0.0015;
+
+function searchTraceOpts(traceOpts) {
+  const floor = traceOpts.minIntensity;
+  if (floor !== undefined && floor > SEARCH_MIN_INTENSITY) return traceOpts;
+  return { ...traceOpts, minIntensity: SEARCH_MIN_INTENSITY };
+}
 const norm = (a) => ((a % TAU) + TAU) % TAU;
 const snapAngle = (a) => norm(Math.round(norm(a) / SNAP) * SNAP);
 
@@ -314,16 +327,24 @@ function searchFrom(level, prefix, options) {
   );
   const budget = opts.timeBudgetMs === undefined ? 6000 : opts.timeBudgetMs;
   const traceOpts = opts.traceOpts || {};
+  const searchOpts = searchTraceOpts(traceOpts);
   const weights = opts.weights || PROFILES[0];
+  // A candidate that looks solved under the coarse exploration floor is not yet believed:
+  // dropping faint light can only ever ADD stray energy back when the floor is lowered, and
+  // stray light of the wrong colour can spoil a receptor. So every hit is re-traced at the
+  // caller's own floor, and only the engine's verdict is returned.
+  const confirms = (optics) => traceScene(level, optics, traceOpts).solved;
   const walls = boardWalls(level);
   const bounds = interior(level);
   const started = now();
   let nodes = 0;
   let timedOut = false;
 
-  const rootRes = traceScene(level, prefix, traceOpts);
+  const rootRes = traceScene(level, prefix, searchOpts);
   nodes++;
-  if (rootRes.solved) return { solved: true, optics: prefix.slice(), nodesExplored: nodes, timedOut: false };
+  if (rootRes.solved && confirms(prefix)) {
+    return { solved: true, optics: prefix.slice(), nodesExplored: nodes, timedOut: false };
+  }
 
   let frontier = [{ optics: prefix.slice(), res: rootRes, score: scoreState(level, prefix, rootRes, weights) }];
   const grids = [COARSE, FINE];
@@ -344,9 +365,11 @@ function searchFrom(level, prefix, options) {
           const sig = signature(next);
           if (seen.has(sig)) continue;
           seen.add(sig);
-          const res = traceScene(level, next, traceOpts);
+          const res = traceScene(level, next, searchOpts);
           nodes++;
-          if (res.solved) return { solved: true, optics: next, nodesExplored: nodes, timedOut: false };
+          if (res.solved && confirms(next)) {
+            return { solved: true, optics: next, nodesExplored: nodes, timedOut: false };
+          }
           produced.push({ optics: next, res, score: scoreState(level, next, res, weights), parent: f });
         }
       }

@@ -327,6 +327,8 @@ function updateReadout() {
 function updateSound() {
   const on_ = state.sound !== false;
   el.sound.setAttribute('aria-pressed', on_ ? 'true' : 'false');
+  // Five glyphs either way, so the chip keeps its width while the state stays readable.
+  el.sound.textContent = on_ ? 'SOUND' : 'MUTED';
   el.sound.title = on_ ? 'Sound on' : 'Sound off';
 }
 

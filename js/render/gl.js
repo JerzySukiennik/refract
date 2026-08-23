@@ -282,12 +282,24 @@ export function resize(gl, canvas) {
     canvas.width = bw;
     canvas.height = bh;
   }
-  boardToPixel(cssW, cssH);
+  const layout = boardToPixel(cssW, cssH);
+  current.w = cssW;
+  current.h = cssH;
+  current.scale = layout.scale;
+  current.ox = layout.ox;
+  current.oy = layout.oy;
   current.dpr = dpr;
   gl.viewport(0, 0, bw, bh);
   return { w: bw, h: bh, dpr, cssW, cssH };
 }
 
+// PURE. It must stay pure: the live transform in `current` is the one `pixelToBoard` inverts
+// to turn a pointer position into a board coordinate, and it is defined in CSS pixels. Callers
+// ask this for a layout at whatever scale suits them -- `board.js` asks in drawing-buffer
+// pixels every frame -- so writing the answer back into `current` here let the renderer's
+// backing-pixel layout overwrite the input transform. On any HiDPI display that silently put
+// every click at roughly half its true board position and nothing could be placed by hand.
+// Only `resize` knows the CSS-pixel truth, so only `resize` publishes it.
 export function boardToPixel(w, h) {
   const mx = Math.max(LAYOUT.minMarginPx, w * LAYOUT.marginXFrac);
   const my = Math.max(LAYOUT.minMarginPx, h * LAYOUT.marginYFrac);
@@ -298,11 +310,6 @@ export function boardToPixel(w, h) {
   const scale = size / BOARD_UNITS;
   const ox = (w - size) * 0.5;
   const oy = (h - reserve - size) * 0.5;
-  current.w = w;
-  current.h = h;
-  current.scale = scale;
-  current.ox = ox;
-  current.oy = oy;
   return { scale, ox, oy, size, w, h };
 }
 

@@ -131,7 +131,10 @@ function levelsPanel() {
   const cells = LEVELS.map((lvl, i) => {
     const best = bestByIndex(i);
     const done = Number.isFinite(best);
-    const locked = i > unlocked;
+    // A level that has been cleared is reachable by definition. Without the `!done` guard a
+    // cell could read LOCKED while wearing the cleared border, which it did for any level
+    // reached out of order (level select, or a solve recorded before the run before it).
+    const locked = i > unlocked && !done;
     const par = Number.isFinite(lvl.par) ? lvl.par : 0;
     const beat = done && par > 0 && best < par;
     const classes = ['level-cell'];
@@ -229,8 +232,12 @@ function trapFocus(ev) {
   if (!nodes.length) return;
   const first = nodes[0];
   const last = nodes[nodes.length - 1];
-  if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
-  else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+  const active = document.activeElement;
+  // The dialog itself holds the opening focus, and it sits before every control in the DOM,
+  // so a first Shift+Tab would otherwise walk straight out of the modal.
+  if (ev.shiftKey && active === rootEl.querySelector('.panel')) { ev.preventDefault(); last.focus(); }
+  else if (ev.shiftKey && active === first) { ev.preventDefault(); last.focus(); }
+  else if (!ev.shiftKey && active === last) { ev.preventDefault(); first.focus(); }
 }
 
 function onKeydown(ev) {
@@ -310,8 +317,8 @@ function render(name) {
   const spec = build();
   rootEl.innerHTML =
     '<div class="scrim"></div>' +
-    '<section class="' + spec.className + '" role="dialog" aria-modal="true" aria-label="' + esc(spec.label) + '">' +
-    spec.html + '</section>';
+    '<section class="' + spec.className + '" role="dialog" aria-modal="true" tabindex="-1" aria-label="' +
+    esc(spec.label) + '">' + spec.html + '</section>';
   return true;
 }
 
@@ -328,7 +335,11 @@ export function showModal(name) {
   rootEl.classList.remove('is-closing');
   rootEl.classList.add('is-open');
 
-  const focusTarget = rootEl.querySelector('input') || rootEl.querySelector('.btn-primary') || rootEl.querySelector(FOCUSABLE);
+  /* A form wants its first field. Everything else takes focus on the dialog itself: focusing
+     the primary button instead left the SOLVED screen's hero button wearing a permanent blue
+     :focus-visible ring, a hue that appears nowhere else in this chrome. tabindex="-1" keeps
+     the panel out of the Tab cycle, so the first Tab still lands on the first control. */
+  const focusTarget = rootEl.querySelector('input') || rootEl.querySelector('.panel') || rootEl.querySelector(FOCUSABLE);
   if (focusTarget) focusTarget.focus({ preventScroll: true });
 }
 

@@ -11,11 +11,11 @@ export const BRICK = {
   joint: 1.8,
   cols: 4,
   courses: 12,
-  light: '#8E6C64',
-  mid: '#815751',
-  dark: '#72463E',
-  rim: '#7F605D',
-  mortar: '#96706A',
+  light: '#7B5A53',
+  mid: '#6F4843',
+  dark: '#5E3831',
+  rim: '#6E504D',
+  mortar: '#96736C',
   tone: 0.965,
 };
 
@@ -121,11 +121,11 @@ export function generateBrickPixels(opts = {}) {
       // multiplier, which reproduces the measured within-course spread.
       const j = hash2(colKey, courseKey, 7331);
       const j2 = hash2(colKey, courseKey, 90211);
-      const ramp = 0.5 + (j - 0.5) * 0.6;
+      const ramp = 0.5 + (j - 0.5) * 0.86;
       let r = lerp(cDark[0], cLight[0], ramp);
       let g = lerp(cDark[1], cLight[1], ramp);
       let b = lerp(cDark[2], cLight[2], ramp);
-      const toneJitter = 1 + (j2 - 0.5) * 0.12;
+      const toneJitter = 1 + (j2 - 0.5) * 0.17;
       r *= toneJitter;
       g *= toneJitter;
       b *= toneJitter;
