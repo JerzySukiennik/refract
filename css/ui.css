@@ -359,8 +359,12 @@ html[data-modal="open"] #dim-layer { opacity: 1; }
 
 .chip:active { transform: translateY(0.5px); }
 
+/* A 1 px inner shadow at 35 % alpha over a black board was not a focus ring anyone could
+   find. Every focusable control now takes a real 2 px offset outline; nothing is focused in
+   the capture harness, so the reference frames are untouched by this. */
 .chip:focus-visible {
-  outline: none;
+  outline: 2px solid var(--sig-mid);
+  outline-offset: 2px;
   border-color: var(--sig-mid);
   color: var(--ink-title);
   box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35);
@@ -550,7 +554,8 @@ html[data-modal="open"] .board-strip { opacity: 0; }
 .dock-tile:hover:not(.is-empty) .glyph .bar { fill: #eceaf0; }
 
 .dock-tile:focus-visible {
-  outline: none;
+  outline: 2px solid var(--sig-mid);
+  outline-offset: 2px;
   border-color: var(--sig-mid);
   box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35);
 }
@@ -756,7 +761,7 @@ html[data-modal="open"] .board-strip { opacity: 0; }
 .btn .gw { letter-spacing: var(--tr-btn); }
 
 .btn:hover { color: var(--ink-title); border-color: #56525c; background: #121019; }
-.btn:focus-visible { outline: none; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35); }
+.btn:focus-visible { outline: 2px solid var(--sig-mid); outline-offset: 2px; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35); }
 .btn-primary:focus-visible { border-color: var(--white); box-shadow: 0 0 0 2px rgba(8, 6, 12, 0.9), 0 0 0 3px rgba(245, 244, 246, 0.55); }
 
 /* The panel takes the opening focus (js/ui/modals.js), so the win screen's hero button is
@@ -868,7 +873,7 @@ html[data-modal="open"] .board-strip { opacity: 0; }
 .level-cell.is-locked .cell-name { color: var(--ink-dim); }
 .level-cell.is-locked .cell-no,
 .level-cell.is-locked .cell-score { color: var(--ink-tag); }
-.level-cell:focus-visible { outline: none; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35); }
+.level-cell:focus-visible { outline: 2px solid var(--sig-mid); outline-offset: 2px; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.35); }
 
 /* forms */
 
@@ -907,6 +912,7 @@ html[data-modal="open"] .board-strip { opacity: 0; }
 
 .field input::placeholder { color: #35323a; }
 .field input:focus { outline: none; border-color: var(--sig-mid); box-shadow: 0 0 0 1px rgba(201, 198, 204, 0.3); }
+.field input:focus-visible { outline: 2px solid var(--sig-mid); outline-offset: 2px; }
 
 /* player roster */
 
@@ -1033,16 +1039,89 @@ html[data-modal="open"] .board-strip { opacity: 0; }
 
 /* ---------- responsive ---------- */
 
+/* ---------- touch ----------
+
+   The rule here, and the reason this block is not simply "make everything bigger": a chip
+   that is 44 px TALL is a fat pill, and the reference's whole top strip is built on the
+   opposite instinct — it spends 15 luminance units on a chip's entire perimeter. So the
+   DRAWN chip keeps its ~21 px box and an invisible ::before carries the 44 px target. The
+   controls that live inside a panel — modal buttons, text fields — have no such restraint
+   to protect, so those really do grow. */
+
 @media (pointer: coarse) {
   :root {
     --fs-micro: clamp(9.5px, calc(var(--board-size) * 0.0145), 13px);
     --fs-small: clamp(11px, calc(var(--board-size) * 0.018), 15px);
-    /* Fingers need a bigger target than the reference's 16 px chip. */
     --fs-btn: clamp(8.5px, calc(var(--board-size) * 0.0132), 12px);
+    /* Apple HIG minimum, and the number js/ui/hud.js reserves board space against. */
+    --touch-min: 44px;
   }
 
-  /* ~28 px tall, which is a tappable chip rather than a photographable one. */
-  .chip { padding: 0.95em 1em; }
+  .chip,
+  .dock-tile,
+  .btn,
+  .level-cell,
+  .field input { touch-action: manipulation; }
+
+  /* Hover is a lie on a touch screen: it sticks after the finger has gone. */
+  .chip:hover { color: var(--ink-mid); border-color: var(--line-chip); background: var(--fill-chip); }
+  .chip:hover::after { box-shadow: 0 0 0 0 rgba(245, 242, 246, 0); }
+  .dock-tile:hover:not(.is-empty) { transform: none; }
+
+  /* The hit box, not the chip. Centred on the chip so it grows symmetrically into the empty
+     band above and below the row, and floored at 44 px wide for the short labels (HINT and
+     ROOM draw 38.5 px). The row's 3 px gap keeps neighbouring boxes from colliding: the
+     tightest pair is 41.75 px centre to centre plus the gap. */
+  .chip::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: max(100%, var(--touch-min));
+    height: var(--touch-min);
+  }
+
+  /* Same trick for the badge-bearing tile is unnecessary — it is already over 44 — but the
+     panel controls were 24.7 px tall and 24.5 px for a field, i.e. 1.8x under. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--touch-min);
+    padding: 0.94em 2.12em;
+  }
+
+  .field input { min-height: var(--touch-min); }
+  .level-cell { min-height: 56px; }
+}
+
+/* Phone portrait. Chrome sizes go to fixed pixels here on purpose: --tile-h used to be
+   derived from --board-size, and js/ui/hud.js now derives --board-size from where the dock
+   and the strip actually are, so leaving the two coupled would make the layout chase its
+   own tail every resize. */
+@media (max-width: 560px) {
+  :root {
+    --inset: 14px;
+    --tile-w: 78px;
+    --tile-h: 62px;
+    --dock-zone: 76px;
+  }
+
+  /* A phone frame is 2.16:1 and the board is square, so ~465 px of the viewport can never
+     be board. Anchored above the dock, the strip landed 122 px below the board and 29 px
+     above the tiles, where it read as a label for the dock. It is the board's caption, so
+     here it is anchored to the board itself — 12 px under the bottom wall, the same
+     relationship the reference has — and the leftover height collects in ONE band under
+     the title instead of two. js/ui/hud.js measures the board's band from the dock for
+     exactly this reason: the caption follows the board, never the other way round. */
+  .board-strip {
+    top: calc(var(--board-y) + var(--board-size) + 12px);
+    bottom: auto;
+    width: min(96vw, 420px);
+  }
+
+  .dock { gap: 10px; }
 }
 
 @media (max-width: 620px) {
@@ -1058,7 +1137,12 @@ html[data-modal="open"] .board-strip { opacity: 0; }
 
 @media (max-width: 420px) {
   .chip-row { gap: 3px; }
-  .chip { padding: 0.55em 0.62em; }
+  /* Deliberately NOT a smaller padding than the base rule. This block used to set
+     0.55em 0.62em, which came after the (pointer: coarse) block at equal specificity and so
+     won on every phone — that is where the measured 45.0 x 19.8 px chip came from. The
+     drawn chip stays this size by choice now; the 44 px target is carried by .chip::before
+     in the coarse block above. */
+  .chip { padding: 0.62em 0.7em; }
 }
 
 @media (max-height: 560px) {

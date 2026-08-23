@@ -26,15 +26,21 @@ const PLACE_SNAP = 25;
 // so this must stay 67 or the mouse target stops sitting on the thing the player can see.
 const RING_RADIUS = 67;
 const HANDLE_GRAB = 26;
-// A finger is not a mouse. At the measured mobile board scale of 0.2958 px/unit a 44 px
-// Apple-HIG target is 148.8 units across, i.e. a 74-unit radius. A 74-unit circle centred on
-// the drawn handle would reach 7 units past the optic's own centre and swallow every body
-// drag, so the coarse circle is centred 95 units out instead — outward of the handle, away
-// from the 55-unit mirror body. Around the handle dot that leaves 30.2 px of reach outward,
-// 13.6 px inward and 20.3 px either side: a 43.8 x 40.6 px target on the visible affordance,
-// against 28 px before. Landing ON 44, not past it.
+// A finger is not a mouse, and a disc centred on the handle cannot be made big enough
+// without eating the body drag: round 3's offset 74-unit circle measured 50 x 49 px around
+// the drawn dot but only 17 px of it lay INWARD, because past that the circle was competing
+// with the piece the handle belongs to.
+//
+// So a finger gets the disc UNION a ring: everything from the body's edge (62 units) out to
+// ROTATE_RING_COARSE turns the selected piece too. Measured at 375x812 by walking real hit
+// tests out from the drawn dot, the union is 51 x 50 px on the dot — the disc's 17 px of
+// inward reach is what the ring cannot supply — and beyond that the ring keeps rotating for
+// a further 30 px all the way round the piece, where a miss used to deselect it instead.
+// The two targets are unambiguous: the body disc (43 px across, and the home of the long
+// press that removes the piece) moves it, everything in the ring around it turns it.
 const HANDLE_GRAB_COARSE = 74;
 const HANDLE_CENTRE_COARSE = 95;
+const ROTATE_RING_COARSE = 150;
 const WALL_CLEARANCE = 16;
 const BODY_RADIUS = { mirror: 55, prism: 43 };
 const GRAB_RADIUS = { mirror: 62, prism: 50 };
@@ -46,6 +52,13 @@ const MAGNET_DEG = 4;
 const DOCK_DRAG_SLOP = 8;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP = 8;
+// A mirror is 110 units long — about 39 px at the phone board scale — and a thumb's contact
+// patch is wider than that, so a ghost drawn under the finger is a ghost the player cannot
+// see. Dock drags lift it clear from the first frame (the finger starts on a tile, so there
+// is no direct-manipulation contract to break); js/ui/hud.js reuses this for its tap-place
+// ghost, but only after the finger starts adjusting, so a plain tap still lands where it
+// was aimed.
+export const TOUCH_GHOST_LIFT = 44;
 
 function radiusOf(type) {
   return BODY_RADIUS[type] || 45;
@@ -168,13 +181,30 @@ function handleAt(x, y, coarse) {
   if (!id) return false;
   const o = getOptic(id);
   if (!o || o.fixed) return false;
-  const orbit = coarse ? HANDLE_CENTRE_COARSE : RING_RADIUS;
-  const hx = o.x + Math.cos(o.angle) * orbit;
-  const hy = o.y - Math.sin(o.angle) * orbit;
+
+  if (coarse) {
+    const dx = o.x - x;
+    const dy = o.y - y;
+    const d2 = dx * dx + dy * dy;
+    // The ring: everything from the body's edge out to ROTATE_RING_COARSE.
+    const inner = grabOf(o.type);
+    if (d2 >= inner * inner && d2 < ROTATE_RING_COARSE * ROTATE_RING_COARSE) return true;
+    // Plus round 3's disc, which reaches back INSIDE the body along the handle's own
+    // direction. The drawn dot orbits at 67 and a mirror's tip is at 55, so without this the
+    // handle would have five units of inward tolerance — 1.7 px — and a thumb that landed a
+    // hair short of the dot would drag the piece instead of turning it.
+    const hx = o.x + Math.cos(o.angle) * HANDLE_CENTRE_COARSE;
+    const hy = o.y - Math.sin(o.angle) * HANDLE_CENTRE_COARSE;
+    return (hx - x) * (hx - x) + (hy - y) * (hy - y) < HANDLE_GRAB_COARSE * HANDLE_GRAB_COARSE;
+  }
+
+  // The mouse keeps the small disc on the drawn dot: a pixel-accurate pointer does not need
+  // the ring, and giving it one would take the click that deselects a piece.
+  const hx = o.x + Math.cos(o.angle) * RING_RADIUS;
+  const hy = o.y - Math.sin(o.angle) * RING_RADIUS;
   const dx = hx - x;
   const dy = hy - y;
-  const r = coarse ? HANDLE_GRAB_COARSE : HANDLE_GRAB;
-  return dx * dx + dy * dy < r * r;
+  return dx * dx + dy * dy < HANDLE_GRAB * HANDLE_GRAB;
 }
 
 function angleFromCentre(o, x, y) {
@@ -194,9 +224,13 @@ export function createInput(canvas, opts = {}) {
 
   canvas.style.touchAction = 'none';
 
-  function toBoard(ev) {
+  function toBoard(ev, liftPx) {
     const rect = canvas.getBoundingClientRect();
-    return pixelToBoard(ev.clientX - rect.left, ev.clientY - rect.top);
+    return pixelToBoard(ev.clientX - rect.left, ev.clientY - rect.top - (liftPx || 0));
+  }
+
+  function ghostLift(ev) {
+    return ev.pointerType === 'mouse' ? 0 : TOUCH_GHOST_LIFT;
   }
 
   function cursorStyle(x, y) {
@@ -335,24 +369,34 @@ export function createInput(canvas, opts = {}) {
     if (ev.cancelable) ev.preventDefault();
     const p = toBoard(ev);
     capture(ev, canvas);
-    if (handleAt(p.x, p.y, ev.pointerType !== 'mouse')) {
+    const coarse = ev.pointerType !== 'mouse';
+
+    /* The handle outranks the body, because both handles reach back inside the selected
+       piece's own grab radius and would otherwise be unreachable. The one thing a FINGER's
+       handle must not outrank is a different piece: its rotate ring reaches 150 units and a
+       neighbour is easily parked inside it, where a tap means the neighbour. The mouse's
+       handle is a 26-unit disc that cannot swallow a neighbour by accident, and its ordering
+       is left exactly as it was. */
+    const hit = opticAt(p.x, p.y);
+    if (handleAt(p.x, p.y, coarse) && (!coarse || !hit || hit.id === state.selectedId)) {
       beginRotate(getOptic(state.selectedId), ev);
       return;
     }
-    const hit = opticAt(p.x, p.y);
+
     if (hit) {
       selectOptic(hit.id);
       const now = performance.now();
-      if (ev.pointerType !== 'mouse' && now - lastTapTime < 320) {
+      if (coarse && now - lastTapTime < 320) {
         lastTapTime = 0;
         beginRotate(hit, ev);
         return;
       }
       lastTapTime = now;
       beginMove(hit, p, ev);
-      if (ev.pointerType !== 'mouse') armPress(hit, ev);
+      if (coarse) armPress(hit, ev);
       return;
     }
+
     selectOptic(null);
     updateHover(p.x, p.y);
   }
@@ -514,7 +558,7 @@ export function createInput(canvas, opts = {}) {
     active.moved = true;
     ev.stopPropagation();
     if (ev.cancelable) ev.preventDefault();
-    updatePlace(ev, toBoard(ev));
+    updatePlace(ev, toBoard(ev, ghostLift(ev)));
   }
 
   function onCaptureUp(ev) {

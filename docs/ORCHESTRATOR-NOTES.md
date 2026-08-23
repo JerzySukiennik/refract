@@ -351,3 +351,41 @@ instrument, not the signal.** Fix the instrument before either believing or dism
 3. **The emitter mouth**, which the round-3 beam critic called the single biggest gap and
    which lives in `board.js`, not `beams.js` — so the beam builder could not touch it. Give
    it to whoever owns `board.js`.
+
+---
+
+## 14. Jurek's play-test, 2026-08-23: the prism must be a piece, not scenery
+
+Feedback while playing: *"Nie da się obracać ani poruszać tego refraktora — on powinien być
+jako drugi coś do położenia przez graczy!"* — you cannot rotate or move the refractor; it
+should be the second thing players place.
+
+He was right, and it was a real defect rather than a preference. Levels 1–4 and TERMINUS
+shipped the prism in `fixed:` with `inventory.prism = 0`, so across the entire opening of
+the game the prism was scenery: unselectable, unrotatable, unmovable. The player met the
+game's second mechanic as something they could only look at.
+
+Fixed: every prism is now inventory on every level. `fixed:` is reserved for MIRRORS used
+deliberately as obstacles (FIXED IDEAS, CATHEDRAL), which is a real mechanic; it must never
+again hold the piece a level is teaching.
+
+**Design rule, binding from now on: if a level introduces or depends on a mechanic, the
+player must be able to hold that mechanic in their hands.** A pre-placed example is a
+tutorial device, not a substitute for the verb.
+
+Consequence to remember: freeing the prism lowered the true minimum on two levels, because
+a placeable prism can go anywhere. Par must equal the true minimum (ARCHITECTURE.md 12), so
+THE LONG FALL went 3 → 2 and TERMINUS went 5 → 3.
+
+### 14.1 Queued: TERMINUS needs a design pass
+
+TERMINUS is the final level and now falls to three optics. It has only two interior walls,
+so the board is too open to force a long path — the solver finds
+`prism@500,200 + mirror@200,550 + mirror@300,350`. Lowering par kept the game honest but
+cost the finale its weight.
+
+The fix is geometry, not par: add interior structure so a fan thrown near the emitter cannot
+reach all three receptors, forcing the beam to travel before it is split. The solver is the
+verifier — change walls, re-run `node tools/validate-levels.mjs`, and iterate until the
+minimum is back at 5 with the authored solution intact. Do not simply raise par; the
+validator will correctly reject it.

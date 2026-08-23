@@ -10,6 +10,30 @@ const LAYOUT = {
   bottomReserveFrac: 0.026,
   minMarginPx: 8,
   maxDPR: 2,
+
+  // Below this CSS width the fractional margins stop being a proportion of a comfortable
+  // frame and start being most of the screen: on a 375 px iPhone XR marginXFrac alone eats
+  // 79 px, capping the board at 295.8 px inside an 812 px viewport. Narrow viewports get a
+  // flat pixel margin and an explicitly reserved chrome band instead.
+  narrowMaxWidthPx: 560,
+  narrowMarginXPx: 14,
+  // Where the board sits inside the band left over after the chrome: 0.5 centres it, 1.0
+  // drops it onto the dock. The band already excludes the caption strip and the dock, so
+  // 0.5 leaves the two unavoidable voids on a 2.16:1 phone frame the same size -- 149 px
+  // under the title against 133 px over the dock at 375x812 -- rather than piling 164 px
+  // above and 118 px below.
+  narrowBias: 0.5,
+
+  // Written by js/ui/hud.js from real element rects; 0 means "not measured yet" and every
+  // formula below falls back to exactly the behaviour it had before these existed.
+  topReservePx: 0,
+  bottomReservePx: 0,
+  chromeBottomPx: 0,
+  // The reference itself lets the hint's cap band sit 8 px inside the board's bottom wall
+  // (board bottom y 620.9, strip top y 612.8 at 720x694), so this is the tolerated
+  // intrusion, not zero. Anything past it is the overlap the round-3 critic measured at
+  // 1280x720, where the strip ran 14.5 px into the brick.
+  chromeOverlapPx: 9,
 };
 
 let current = { w: 1, h: 1, dpr: 1, scale: 1, ox: 0, oy: 0 };
@@ -293,6 +317,23 @@ export function resize(gl, canvas) {
   return { w: bw, h: bh, dpr, cssW, cssH };
 }
 
+// How many of the caller's pixels one CSS pixel is worth. `resize` and `js/ui/hud.js` ask for
+// a layout in CSS pixels; `js/render/board.js` asks in drawing-buffer pixels every frame. Every
+// threshold below -- narrowMaxWidthPx, the flat narrow margin, minMarginPx, and the chrome
+// rects hud.js measures -- is a CSS-pixel quantity, so a drawing-buffer request has to be
+// solved in CSS space and scaled back afterwards.
+//
+// Without this, an iPhone XR (375 CSS px, dpr 2) handed the renderer a 750 px request, which
+// sailed past the 560 px narrow threshold and took the desktop branch: the board ART drew at
+// 295.8 CSS px while the beams and `pixelToBoard` used the correct 347 px narrow layout. The
+// beam left the board through the bottom wall and every tap landed off its mark.
+function requestRatio(w) {
+  const cssW = current.w;
+  if (!(w > 0) || !(cssW > 1)) return 1;
+  const r = w / cssW;
+  return r > 1.02 && r <= 4.2 ? r : 1;
+}
+
 // PURE. It must stay pure: the live transform in `current` is the one `pixelToBoard` inverts
 // to turn a pointer position into a board coordinate, and it is defined in CSS pixels. Callers
 // ask this for a layout at whatever scale suits them -- `board.js` asks in drawing-buffer
@@ -301,16 +342,54 @@ export function resize(gl, canvas) {
 // every click at roughly half its true board position and nothing could be placed by hand.
 // Only `resize` knows the CSS-pixel truth, so only `resize` publishes it.
 export function boardToPixel(w, h) {
+  const r = requestRatio(w);
+  if (r === 1) return cssLayout(w, h);
+  const t = cssLayout(w / r, h / r);
+  return { scale: t.scale * r, ox: t.ox * r, oy: t.oy * r, size: t.size * r, w, h };
+}
+
+function cssLayout(w, h) {
+  if (w <= LAYOUT.narrowMaxWidthPx) return narrowLayout(w, h);
+
   const mx = Math.max(LAYOUT.minMarginPx, w * LAYOUT.marginXFrac);
   const my = Math.max(LAYOUT.minMarginPx, h * LAYOUT.marginYFrac);
   const reserve = h * LAYOUT.bottomReserveFrac;
   const availW = Math.max(1, w - mx * 2);
   const availH = Math.max(1, h - my * 2 - reserve);
-  const size = Math.min(availW, availH);
-  const scale = size / BOARD_UNITS;
+  let size = Math.min(availW, availH);
+  let oy = (h - reserve - size) * 0.5;
+
+  // The fractional reserve is a proportion of the viewport, but the strip and the dock are
+  // laid out in near-fixed pixels, so on a short wide frame the board's bottom wall grows
+  // straight through the hint. Never enlarges the board: it slides it up first and only
+  // shrinks it once the top margin is reached.
+  if (LAYOUT.chromeBottomPx > 0) {
+    const maxBottom = h - LAYOUT.chromeBottomPx + LAYOUT.chromeOverlapPx;
+    if (oy + size > maxBottom) {
+      oy = maxBottom - size;
+      if (oy < my) {
+        oy = my;
+        size = Math.max(1, maxBottom - my);
+      }
+    }
+  }
+
+  return { scale: size / BOARD_UNITS, ox: (w - size) * 0.5, oy, size, w, h };
+}
+
+// Phone layout. The board is as wide as the frame allows and is parked inside the band
+// between the measured chrome, rather than being centred in a viewport whose top and bottom
+// thirds it can never use.
+function narrowLayout(w, h) {
+  const mx = Math.max(LAYOUT.minMarginPx, LAYOUT.narrowMarginXPx);
+  const top = LAYOUT.topReservePx > 0 ? LAYOUT.topReservePx : h * 0.13;
+  const bottom = LAYOUT.bottomReservePx > 0 ? LAYOUT.bottomReservePx : h * 0.19;
+  const availW = Math.max(1, w - mx * 2);
+  const availH = Math.max(1, h - top - bottom);
+  const size = Math.max(1, Math.min(availW, availH));
   const ox = (w - size) * 0.5;
-  const oy = (h - reserve - size) * 0.5;
-  return { scale, ox, oy, size, w, h };
+  const oy = top + (availH - size) * LAYOUT.narrowBias;
+  return { scale: size / BOARD_UNITS, ox, oy, size, w, h };
 }
 
 export function pixelToBoard(px, py) {

@@ -20,7 +20,7 @@
 import { createProgram, getTransform } from './gl.js';
 import { nmToRenderRGB } from '../optics/spectrum.js';
 
-const FLOATS_PER_INSTANCE = 13;
+const FLOATS_PER_INSTANCE = 14;
 const INSTANCE_STRIDE = FLOATS_PER_INSTANCE * 4;
 
 // Everything the reference measured is in pixels of a 720x694 frame whose board->pixel
@@ -41,7 +41,18 @@ const DEFAULTS = {
   // linearToSRGB, then the ACES quadratic -- an sRGB core of 0.80 needs 0.462 linear at the
   // composite, of which the halo lobe supplies 0.035 and bloom a little more. Measured back
   // out of the capture at three rows of a long run: 0.797, 0.801, 0.818.
-  whiteGain: 0.455,
+  //
+  // Round 4 takes one small measured step. The 7-reference-px core mean of the fresh board's
+  // emitter run read 0.789 where 4.6 asks for ~0.82, and the haze skirt measured slightly
+  // UNDER the reference at the same time (absolute luminance at 26 / 30 / 40 reference px:
+  // 6.79 / 1.53 / 0.35 against 7.16 / 2.05 / 0.71), so the beam read translucent rather than
+  // as a solid lit volume. This gain scales the core and the skirt together, which is what
+  // is wanted. The step is sized, not guessed: the composite's local exponent at this
+  // operating point is 0.48, so 0.82 / 0.789 = 1.039 on screen needs 1.039^(1/0.48) = 1.084
+  // in linear radiance, i.e. 0.455 -> 0.493. It is NOT taken to 4.5's 0.885, which is a
+  // measurement of ref_030's generation 0 and 0.06 above what 4.6 says the tonemap should
+  // land on.
+  whiteGain: 0.493,
   whiteHalfWidth: BEAM_HALF_WIDTH,
   // REFERENCE.md 5.3: peak fan brightness is 0.48 of the white beam's own core, and the
   // fan NEVER clips -- the measured peak is value 0.44 against a core near 0.92. At 0.18
@@ -106,21 +117,29 @@ const DEFAULTS = {
   // which left only the amplitude here. Simulating the composite over the new profile,
   // 0.75 gives 49 / 50 / 45 at r = 14 / 16 / 18 against the reference's 47 / 50 / 45.
   fringeChroma: 0.75,
-  // GRAIN IS CALIBRATED ON THE COMPOSITED PNG, NOT AT AUTHORING TIME. REFERENCE.md 4.3
-  // measures 1.0-1.4 % residual sigma over the local mean in the core, and tells you to
-  // author at 4-6 % because video compression eats the rest. Authoring 4.6 % here and
-  // stopping was the bug: between this shader and the final pixel the signal loses about
-  // 14x. Roughly 4x of that is the ACES curve, whose relative gain d(log sRGB)/d(log linear)
-  // is only 0.25 at the core's 0.46 linear radiance, and the remaining ~2x is the 2x
-  // supersample being box-filtered down to 720x694 at capture.
+  // GRAIN IS CALIBRATED ON THE COMPOSITED PNG, NOT AT AUTHORING TIME, and it is calibrated
+  // on the BAND-RESOLVED spectrum, not on an RMS number. REFERENCE.md 4.3 measures 1.0-1.4 %
+  // residual sigma over the local mean in the core and tells you to author at 4-6 % because
+  // video compression eats the rest; between this shader and the final pixel the signal
+  // loses about 14x, most of it the ACES curve, whose relative gain d(log sRGB)/d(log
+  // linear) is only about 0.25 at the core's operating radiance.
   //
-  // So this number is set by MEASURING: take the beam centreline out of the PNG, subtract a
-  // 13 px running mean, divide the residual sigma by the local mean. The old 0.16 read
-  // 0.30 %. 0.55 read 2.18 % with the octave weights below, and looked like it: soft cloud.
-  // 0.30 reads 1.03 % on the emitter run of the fresh board, inside 4.3's measured band and
-  // within 8 % of the 0.95 % the same test gives on ref_001 itself.
-  grainAmount: 0.30,
-  grainDrift: 26.0,
+  // AN RMS NUMBER IS NOT ENOUGH AND ROUNDS 2 AND 3 WERE FOOLED BY ONE. Both calibrated
+  // against a 13 px running mean, which is blind to everything slower than 13 px -- and the
+  // beam's fault was that essentially ALL of its energy was slower than that. At win13 the
+  // old stack measured 0.58 % against the reference's 0.63 % and looked on target; measured
+  // properly against a 101 px mean and split by period it had 0.1 % of its energy in the
+  // 3-6 px band against the reference's 21-35 % and 77 % above 25 px against 13-30 %. Use
+  // a 101 px detrend and read the bands. See the octave stack in the fragment shader.
+  //
+  // The amplitude itself is then one measured scalar: take the 7-reference-px core mean
+  // along a long clean run out of the PNG, detrend with a 61 px mean, divide the residual
+  // sigma by the local mean. The reference reads 0.72-0.81 % on ref_001 and ref_010.
+  grainAmount: 0.16,
+  // Lattice cells per second, NOT board units per second -- the drift is applied in noise
+  // space so every octave crawls at the same visual rate. 26 u/s on the old stack's
+  // dominant octave was 1.76 cells/s, which is what this preserves.
+  grainDrift: 1.8,
   // The soft skirt the beam sits in: the "very light volumetric haze so beams read as
   // occupying air" that ARCHITECTURE.md 11 lists as a deliberate departure from 4.1, which
   // measures the reference beam as effectively black past 26 px.
@@ -147,7 +166,20 @@ const DEFAULTS = {
   haloGain: 0.060,
   haloWidth: 0.55,
   haloExtent: 1.9,
-  hotRadius: 22.0,
+  // The radius of the mouth flare, in BOARD UNITS, and the unit is the whole story. 22 u is
+  // 12.5 reference px, but REFERENCE.md 4.4 measures "a soft roughly circular glow of radius
+  // ~22 px" -- 22 REFERENCE px, which is 39 board units. The old value was the reference's
+  // number with the conversion left out, so the glow died at little more than half the
+  // distance it should. Measured on half-circle arcs behind the mouth (r4-fresh against
+  // ref_001) at 10 / 16 / 22 / 30 reference px, ours read 0.326 / 0.081 / 0.008 / 0.006
+  // against the reference's 0.509 / 0.328 / 0.197 / 0.056: we tracked it to 16 px and then
+  // fell off a cliff.
+  //
+  // Do NOT raise hotGain to compensate. The slit already peaks 0.95 against the reference's
+  // 0.89 and it is drawn by board.js, not here; more gain would blow it further without
+  // moving the 22 and 30 px arcs, which are fed by the bloom of a WIDE bright region rather
+  // than by a brighter small one.
+  hotRadius: 39.0,
   // REFERENCE.md 4.4 is explicit that at a mirror hit there is NO visible hot spot or flare
   // beyond the rod's own specular line -- "the beam simply turns" -- and that the glow around
   // the emitter mouth is only ~0.12 peak. 0.75 was strong enough to bloom a bead into the
@@ -180,7 +212,48 @@ const DEFAULTS = {
   // composited step is very nearly a power of the linear one -- 0.9^4 = 0.656 linear
   // produced 0.816 on screen, i.e. an effective exponent of 0.48 -- so the linear ratio
   // wanted is 0.853^(1/0.48) = 0.72, which is 0.9^3.2.
-  intensityShape: 3.2,
+  //
+  // 3.2 was fitted against the FOUR-BOUNCE endpoint and undershot the first step, which is
+  // the one the eye actually reads. Re-measured on r4-folding, the four legs' 7-reference-px
+  // core means came out 0.818 / 0.717 / 0.595 / 0.536, a -12.3 % first step against 4.5's
+  // measured -14.7 %, with the last leg at 0.655 of generation 0 against the reference's
+  // 0.565. Both ends want more shaping. The effective composite exponent measured between
+  // those two legs is 0.418, not the 0.48 assumed above, and the bracket is known on both
+  // sides -- 3.2 gives -12.3 % and 4.0 gave -18.4 % -- so the interpolation for -14.7 % is
+  // 3.5, which also pulls the fourth leg to 0.625 of generation 0. It does not reach 0.565
+  // there and is not pushed further: the reference's own generation 2 measures BRIGHTER
+  // than its generation 1 (0.805 against 0.755), so its four-point sequence carries real
+  // measurement noise and fitting the endpoint exactly would blow the first step past it.
+  intensityShape: 3.5,
+  // THE PRISM'S LEFTOVERS MUST NOT OUTSHINE ITS SPECTRUM.
+  //
+  // REFERENCE.md 5.4 sweeps a full circle at R = 140 px around the reference prism and
+  // finds three outputs: the primary fan at peak 0.42, a secondary fan at 0.26 and a
+  // neutral residual at 0.32 -- i.e. the byproducts run at 0.62x and 0.76x the fan. Ours
+  // ran the other way round. Measured on the free-field rig at prism angle 30 deg, the
+  // neutral wedge peaked at 0.478 against the fan's 0.090: five times inverted, and the
+  // round-4 critic measured 1.34x and 1.39x on its own capture of a different board.
+  //
+  // The cause is physics, not a shader bug, and the tracer is right to keep it. An
+  // equilateral prism at n = 1.52 has a critical angle of 41 deg, so whenever the beam
+  // arrives within about 30 deg of the entry face's normal the short half of the band
+  // exceeds it at the exit face and total-internally-reflects. Scanning all 72 five-degree
+  // orientations on a real board, 33 of them put a byproduct above 40 % of the primary and
+  // 20 of them cut the fan itself down to 16-21 of its 48 wavelengths -- which is also why
+  // the fan reads over-saturated in those orientations: what is left of it is the red half.
+  //
+  // So the split is drawn, not traced. `segment.side` counts glass-surface REFLECTIONS
+  // (see the note above newSegment in optics/trace.js). The lowest `side` that carries
+  // real spectral energy is the primary output -- which correctly follows the light when
+  // the whole fan leaves through a face it had to bounce to reach, as it does at 15 deg --
+  // and everything above it is a byproduct. Byproducts are then scaled so that their total
+  // drawn energy is at most BYPRODUCT_BUDGET of the primary's, and desaturated toward their
+  // own luminance so a truncated bundle cannot read as a coloured beam. The scale is 1
+  // whenever the byproducts are already subordinate, so a clean orientation is untouched.
+  //
+  // Calibrated by capture, not by eye: see the round-4 numbers in the report.
+  byproductBudget: 0.35,
+  byproductDesat: 0.45,
 };
 
 // Board units for a distance the reference measured in pixels.
@@ -197,7 +270,7 @@ layout(location = 0) in vec2 aCorner;
 layout(location = 1) in vec4 aEnds;
 layout(location = 2) in vec3 aColor;
 layout(location = 3) in vec3 aParams;
-layout(location = 4) in vec3 aHot;
+layout(location = 4) in vec4 aHot;
 
 uniform mat4 uViewProj;
 uniform float uWhiteHalfWidth;
@@ -219,6 +292,13 @@ flat out float vIntensity;
 flat out float vSpectral;
 flat out float vInside;
 flat out vec2 vHot;
+// 1 on the emitter's own first segment, 0 everywhere else. An emitter is an opaque
+// housing with a slot in it: light leaves through the slot and nowhere else. The capsule
+// profile is radial about p0, so without this the first segment paints its full core out
+// the BACK of the aperture and floods the housing board.js draws there -- measured at 0.83
+// display luma 8 u behind the mouth and still 0.61 at 26 u, against the reference's 0.37
+// machined-grey plateau at the same place.
+flat out float vAperture;
 flat out float vSeed;
 
 void main() {
@@ -258,6 +338,7 @@ void main() {
   vSpectral = spectral;
   vInside = inside;
   vHot = aHot.xy;
+  vAperture = aHot.w;
   vSeed = fract(dot(p0, vec2(0.0173, 0.0311)) + dot(p1, vec2(0.0071, 0.0129))) * 37.0;
 
   gl_Position = uViewProj * vec4(pos, 0.0, 1.0);
@@ -277,6 +358,7 @@ flat in float vIntensity;
 flat in float vSpectral;
 flat in float vInside;
 flat in vec2 vHot;
+flat in float vAperture;
 flat in float vSeed;
 
 uniform float uTime;
@@ -314,6 +396,34 @@ float vnoise(vec2 p) {
   float c = hash21(i + vec2(0.0, 1.0));
   float d = hash21(i + vec2(1.0, 1.0));
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// One BAND-PASSED octave of longitudinal grain.
+//
+// This exists because plain value noise is the wrong instrument for authoring a spectrum.
+// A value-noise field with lattice spacing L is white noise sampled every L and then
+// interpolated: its power spectrum runs from DC up to the lattice Nyquist and DECAYS
+// monotonically, so its energy sits at periods of 2L and LONGER, never at L. Stacking four
+// such octaves at lattices of 18.3 / 11.7 / 8.4 / 4.5 reference px therefore authored
+// nothing at all below 9 px and piled most of the energy into 30-300 px drifts -- which is
+// exactly what the round-4 critic measured on the composited PNG (0.1 % of the residual's
+// energy in the 3-6 px band against the reference's 34.8 %, and 77 % above 25 px against
+// 13 %) and exactly why the beam read as slow smoke rather than as dusty air. The old
+// comment naming those four periods described the LATTICES, not the periods they produce.
+//
+// Differencing the field against itself a fixed distance `delta` downstream turns it into a
+// band-pass: the transfer is |2 sin(pi f delta)|, identically zero at DC and first maximal
+// at a period of 2 * delta. Multiplying that against the field's own decaying spectrum puts
+// a real peak at a chosen period instead of a shoulder at an unreachable one. Both samples
+// come from the same field, so the octave stays a smooth, correlated pattern -- it is a
+// high-passed cloud, not a second uncorrelated noise.
+//
+// `freq` is in cycles per board unit and `delta` in lattice cells, so an octave whose
+// lattice is L reference px uses freq = REFERENCE_SCALE / L and peaks at 2 * delta * L
+// reference px.
+float grainBand(float ax, float lat, float freq, float delta, float phase) {
+  float x = ax * freq + phase;
+  return vnoise(vec2(x, lat)) - vnoise(vec2(x + delta, lat));
 }
 
 float capsuleDist(float along, float across, float len) {
@@ -434,22 +544,39 @@ void main() {
     coreness = pC;
   }
 
-  // Four octaves at the four periods REFERENCE.md 4.3 measured in the residual's power
-  // spectrum -- 18.3, 11.7, 8.4 and 4.5 reference px along the beam, i.e. 0.031, 0.0486,
-  // 0.0676 and 0.126 per board unit -- with the lateral scale giving the ~3 px correlation
-  // length across the beam that the same section measures.
+  // Four octaves, fitted to the BAND-RESOLVED power spectrum of the reference's own
+  // centreline residual rather than to an RMS number. Measured on ref_001's emitter run
+  // (7-reference-px core mean, residual after a 101 px running mean, Hann-windowed), the
+  // reference splits as 0-3 px 10.3 %, 3-6 px 21.4 %, 6-10 px 7.1 %, 10-25 px 31.2 %,
+  // > 25 px 30.0 %. It is broadband with a third of its energy at periods a human reads as
+  // SPECKLE, and that third is what makes it look like dust in air.
   //
-  // The weights are tilted UP towards the short periods. An equal-weight or low-tilted
-  // stack reads as cloud, not grain: at 4x zoom it made soft mottled blobs where the
-  // reference shows fine longitudinal striation, because the 18 px octave carries the eye
-  // and the 4.5 px one is invisible under it.
+  // Three of the four octaves are band-passed through grainBand (see its note) so their
+  // energy actually lands where they are named; the fourth is a plain octave, kept because
+  // the reference genuinely does carry a long, slow component and a purely band-passed
+  // stack reads as sandpaper. Lattices and peak periods, in reference px:
+  //
+  //   w 1.00  lattice 1.0   delta 2.0 cells -> peaks at  4.0 px   the speckle
+  //   w 0.55  lattice 2.4   delta 2.0 cells -> peaks at  9.6 px
+  //   w 0.80  lattice 6.0   delta 1.0 cell  -> peaks at 12.0 px
+  //   w 0.75  lattice 14.0  plain           -> the > 25 px drift
+  //
+  // Modelled through the composite this predicts 0-3 7.6 %, 3-6 29.4 %, 6-10 16.2 %,
+  // 10-25 27.9 %, > 25 18.8 %.
+  //
+  // The lateral scale is unchanged: 0.2 per board unit is a 5 u lattice, i.e. the ~3
+  // reference px correlation length across the beam that REFERENCE.md 4.3 measures.
+  //
+  // Drift is applied in NOISE space, not in board units, so every octave crawls at the same
+  // visual rate. Scrolling board units instead would move the 1 px lattice sixteen times
+  // faster than the 14 px one and turn the speckle into television static.
   float drift = uTime * uGrainDrift;
-  float ax = vAlong - drift + vSeed * 91.0;
+  float ax = vAlong + vSeed * 91.0;
   float lat = vAcross * 0.2 + vSeed;
-  float n = 0.55 * (vnoise(vec2(ax * 0.0310, lat)) - 0.5);
-  n += 0.80 * (vnoise(vec2(ax * 0.0486 + 13.7, lat * 1.4 + 4.1)) - 0.5);
-  n += 1.00 * (vnoise(vec2(ax * 0.0676 + 71.3, lat * 1.9 + 9.6)) - 0.5);
-  n += 0.85 * (vnoise(vec2(ax * 0.1262 + 41.9, lat * 2.6 + 21.4)) - 0.5);
+  float n = 1.00 * grainBand(ax, lat, 0.5680, 2.0, -drift);
+  n += 0.55 * grainBand(ax, lat * 1.5 + 4.1, 0.2367, 2.0, 13.7 - drift);
+  n += 0.80 * grainBand(ax, lat * 2.0 + 9.6, 0.0947, 1.0, 71.3 - drift);
+  n += 0.75 * (vnoise(vec2(ax * 0.0406 + 41.9 - drift, lat * 2.6 + 21.4)) - 0.5);
   // REFERENCE.md 4.3 puts the grain at 1.0-1.4 % in the core, 0.6-0.9 % on the shoulders and
   // 0.5 % in the wings, so it is weighted by how core-like the sample is. The window is
   // tighter than it used to be: a multiplicative ripple riding the steep outer gradient
@@ -473,6 +600,11 @@ void main() {
   float hr2 = max(uHotRadius * uHotRadius, 1.0);
   float hot = vHot.x * exp(-dA * dA / hr2) + vHot.y * exp(-dB2 * dB2 / hr2);
   energy *= 1.0 + hot * uHotGain;
+
+  // The aperture plane. Cut over 3 u rather than hard, so the edge antialiases instead of
+  // stair-stepping across the slit, and applied after the hot term so the mouth's own flare
+  // is cut with everything else.
+  energy *= 1.0 - vAperture * clamp(-vAlong / 3.0, 0.0, 1.0);
 
   // White light does not attenuate with distance (REFERENCE.md 4.4). Per-bounce loss is
   // the tracer's business and already sits in vIntensity.
@@ -588,7 +720,7 @@ export function createBeamRenderer(gl) {
   gl.vertexAttribPointer(3, 3, gl.FLOAT, false, INSTANCE_STRIDE, 28);
   gl.vertexAttribDivisor(3, 1);
   gl.enableVertexAttribArray(4);
-  gl.vertexAttribPointer(4, 3, gl.FLOAT, false, INSTANCE_STRIDE, 40);
+  gl.vertexAttribPointer(4, 4, gl.FLOAT, false, INSTANCE_STRIDE, 40);
   gl.vertexAttribDivisor(4, 1);
 
   gl.bindVertexArray(null);
@@ -620,10 +752,50 @@ export function createBeamRenderer(gl) {
     capacity = next;
   }
 
+  // Which glass-reflection order is the primary spectral output, and how hard every later
+  // order has to be pulled down to stay under DEFAULTS.byproductBudget of it. Runs over the
+  // segment list once, allocates nothing beyond the small per-order accumulator, and
+  // returns 1 when there is no prism in the scene at all.
+  const sideEnergy = new Float64Array(16);
+  const plan = { primarySide: 0, scale: 1 };
+
+  function byproductPlan(list) {
+    plan.primarySide = 0;
+    plan.scale = 1;
+    sideEnergy.fill(0);
+    let total = 0;
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      if (!s.nm || s.inside) continue;
+      const intensity = s.intensity === undefined ? 1.0 : s.intensity;
+      if (!(intensity > 0.0004)) continue;
+      const side = Math.min(sideEnergy.length - 1, (s.side | 0));
+      sideEnergy[side] += intensity;
+      total += intensity;
+    }
+    if (total <= 0) return plan;
+    // A 2 % floor keeps a stray sliver of light that happened to leave early from being
+    // mistaken for the spectrum and dimming the real fan behind it.
+    let primarySide = 0;
+    for (let i = 0; i < sideEnergy.length; i++) {
+      if (sideEnergy[i] > total * 0.02) { primarySide = i; break; }
+    }
+    plan.primarySide = primarySide;
+    const primary = sideEnergy[primarySide];
+    let rest = 0;
+    for (let i = primarySide + 1; i < sideEnergy.length; i++) rest += sideEnergy[i];
+    if (rest <= 0 || primary <= 0) return plan;
+    plan.scale = Math.min(1, (params.byproductBudget * primary) / rest);
+    return plan;
+  }
+
   function upload(segments) {
     if (disposed) return;
     const list = segments || [];
     ensureCapacity(list.length || 1);
+
+    byproductPlan(list);
+    const desat = params.byproductDesat;
 
     let w = 0;
     for (let i = 0; i < list.length; i++) {
@@ -631,8 +803,13 @@ export function createBeamRenderer(gl) {
       const dx = s.bx - s.ax;
       const dy = s.by - s.ay;
       if (dx * dx + dy * dy < 1e-8) continue;
-      const intensity = s.intensity === undefined ? 1.0 : s.intensity;
+      let intensity = s.intensity === undefined ? 1.0 : s.intensity;
       if (!(intensity > 0.0004)) continue;
+
+      // A byproduct is any light that needed one more glass reflection than the spectrum
+      // did. In-glass segments are excluded: they are the guide line inside the prism.
+      const byproduct = !s.inside && (s.side | 0) > plan.primarySide;
+      if (byproduct) intensity *= plan.scale;
 
       const spectral = s.nm ? 1.0 : 0.0;
       let r = 1.0;
@@ -641,6 +818,14 @@ export function createBeamRenderer(gl) {
       if (spectral === 1.0) {
         const c = linearForNm(s.nm);
         r = c[0]; g = c[1]; b = c[2];
+        if (byproduct && desat > 0) {
+          // Toward the sample's own luminance, which is linear in spectral power, so the
+          // sum over a full bundle stays exactly as neutral as it was.
+          const y = r * 0.2126 + g * 0.7152 + b * 0.0722;
+          r += (y - r) * desat;
+          g += (y - g) * desat;
+          b += (y - b) * desat;
+        }
       }
 
       // The handedness is a property of the ray, carried by the tracer. Falling back to
@@ -662,6 +847,7 @@ export function createBeamRenderer(gl) {
       data[w + 10] = hotStart(s);
       data[w + 11] = hotEnd(s);
       data[w + 12] = s.inside ? 1.0 : 0.0;
+      data[w + 13] = (s.generation | 0) === 0 && !s.inside ? 1.0 : 0.0;
       w += FLOATS_PER_INSTANCE;
     }
 

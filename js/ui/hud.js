@@ -1,13 +1,26 @@
 // HUD chrome: level title, control chips, inventory dock, used/par readout and the hint strip.
 
 import { state, on, emit, reset, addOptic, selectOptic } from '../state.js';
-import { boardToPixel, pixelToBoard } from '../render/gl.js';
-import { isValidPlacement } from '../input.js';
+import { boardToPixel, pixelToBoard, setBoardLayout, getBoardLayout } from '../render/gl.js';
+import { isValidPlacement, TOUCH_GHOST_LIFT } from '../input.js';
 import { showModal } from './modals.js';
 
 const TAU = Math.PI * 2;
 const PLACE_SNAP = 25;
 const TAP_SLOP = 8;
+// Apple HIG minimum. css/ui.css grows every control's HIT box to this without growing the
+// drawn chip, so the reference's chrome restraint survives contact with a thumb.
+const TOUCH_MIN = 44;
+// Air between the chrome's touch box and the board's outer wall on a phone.
+const CHROME_GAP = 8;
+
+const coarseQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(pointer: coarse)')
+  : null;
+
+function isCoarse() {
+  return !!(coarseQuery && coarseQuery.matches);
+}
 
 const GLYPHS = {
   mirror: '<svg class="glyph" viewBox="0 0 40 28" aria-hidden="true"><rect class="bar" x="6" y="11.6" width="28" height="4.8" rx="2.4"/></svg>',
@@ -31,9 +44,11 @@ let lastHintText = '';
 let started = false;
 let metricsRaf = 0;
 
-// Tap-then-tap placement: a tile is "armed", the next tap on the board drops the optic.
+// Tap-then-tap placement: a tile is "armed", the next press on the board opens a ghost and
+// the release drops the optic.
 let armedType = null;
 let tapStart = null;
+let placing = null;
 
 let audioMod = null;
 let audioRequested = false;
@@ -85,9 +100,57 @@ export function syncBoardMetrics() {
   return m;
 }
 
-function queueMetrics() {
+/* The renderer cannot see the chrome, so it used to guess at it with viewport fractions:
+   on a 375 px phone that guess cost 79 px of horizontal margin and capped the board at
+   295.8 px inside an 812 px frame, and on a short wide desktop frame it let the board's
+   bottom wall grow 14.5 px through the hint strip. Here we hand it the real rects. */
+function measureChrome() {
+  if (!started || !el.strip) return;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const opts = {};
+
+  const strip = el.strip.getBoundingClientRect();
+  const narrow = w <= getBoardLayout().narrowMaxWidthPx;
+
+  if (narrow) {
+    const chips = el.chips.getBoundingClientRect();
+    const one = el.chips.querySelector('.chip');
+    const chipH = one ? one.getBoundingClientRect().height : chips.height;
+    // The drawn chip is ~21 px tall; its touch box is 44, so it reaches this much further
+    // down than its own border box does and the board has to start below THAT.
+    const reach = isCoarse() ? Math.max(0, (TOUCH_MIN - chipH) / 2) : 0;
+    opts.topReservePx = Math.max(0, chips.bottom + reach + CHROME_GAP);
+
+    /* On a phone the strip is the board's CAPTION: css/ui.css anchors it to --board-y +
+       --board-size, so measuring the board's band from the strip would be circular — the
+       board would chase its own caption every resize. The dock is anchored to the viewport
+       bottom and is the only fixed thing down there, so the band is measured from the dock
+       and the caption's own height is added back. */
+    const dock = el.dock.getBoundingClientRect();
+    const stripH = strip.height > 0 ? strip.height : 14;
+    const dockReach = dock.height > 0 ? Math.max(0, h - dock.top) : h * 0.12;
+    opts.chromeBottomPx = dockReach;
+    opts.bottomReservePx = dockReach + stripH + CHROME_GAP * 2;
+  } else if (strip.height > 0) {
+    opts.chromeBottomPx = Math.max(0, h - strip.top);
+  }
+
+  setBoardLayout(opts);
+}
+
+// One re-run per settle. On desktop the strip's own offset is derived from --tile-h, which
+// is derived from --board-size, so the first pass can move the answer; the loop is heavily
+// damped and converges in two, but it is bounded here so it can never spin.
+function queueMetrics(pass = 0) {
   if (metricsRaf) return;
-  metricsRaf = requestAnimationFrame(() => { metricsRaf = 0; syncBoardMetrics(); });
+  metricsRaf = requestAnimationFrame(() => {
+    metricsRaf = 0;
+    const before = boardMetrics().size;
+    measureChrome();
+    const after = syncBoardMetrics().size;
+    if (pass < 2 && Math.abs(after - before) > 0.5) queueMetrics(pass + 1);
+  });
 }
 
 /* ---------- angle conversion (contract: lives here only) ----------
@@ -183,6 +246,7 @@ function snapPos(v) {
 }
 
 function disarm(silent) {
+  clearGhost();
   if (!armedType) return;
   armedType = null;
   if (!silent) setHintOverride('', 0);
@@ -195,53 +259,135 @@ function arm(type) {
     setHintOverride('NO ' + (LABELS[type] || type) + 'S LEFT', 1400, 'alert');
     return;
   }
+  clearGhost();
   armedType = armedType === type ? null : type;
   playSfx(armedType ? 'ui_switch' : 'ui_click');
   overrideText = '';
   refreshHUD();
 }
 
-function boardPointFromEvent(ev) {
+function boardPointFromEventXY(clientX, clientY) {
   if (!canvasEl) return null;
   const rect = canvasEl.getBoundingClientRect();
   try {
-    return pixelToBoard(ev.clientX - rect.left, ev.clientY - rect.top);
+    return pixelToBoard(clientX - rect.left, clientY - rect.top);
   } catch (err) {
     return null;
   }
 }
 
-// Runs in the capture phase on window, so it sees a board tap before js/input.js does.
-function onArmedPointerDown(ev) {
-  if (!armedType) return;
-  if (ev.target && ev.target.closest && ev.target.closest('#hud, #modal-root')) return;
-  if (canvasEl && ev.target !== canvasEl) return;
+/* Tap-to-place used to commit on pointerdown, so a thumb placed a piece it had never seen
+   and learned where it landed only from the piece that appeared under it. Now the press
+   opens a live ghost that the finger can slide, and the release commits it — the same
+   contract the mouse's drag has always had. The ghost is drawn by js/render/board.js from
+   state.ghost. */
 
-  const p = boardPointFromEvent(ev);
-  if (!p) return;
-  const type = armedType;
+function ghostAt(type, clientX, clientY) {
+  const p = boardPointFromEventXY(clientX, clientY);
+  if (!p) return null;
   const x = snapPos(p.x);
   const y = snapPos(p.y);
+  return {
+    kind: 'place',
+    id: null,
+    type,
+    x,
+    y,
+    angle: DEFAULT_ANGLE[type] || 0,
+    valid: isValidPlacement(type, x, y, null),
+  };
+}
 
-  ev.preventDefault();
+function clearGhost() {
+  if (placing) {
+    window.removeEventListener('pointermove', onPlacingMove, true);
+    window.removeEventListener('pointerup', onPlacingUp, true);
+    window.removeEventListener('pointercancel', onPlacingCancel, true);
+  }
+  placing = null;
+  state.ghost = null;
+}
+
+// The first touch lands the ghost exactly where the finger is, so a plain tap is honest.
+// Once the finger starts adjusting, the ghost lifts clear of it — an optic is about 40 px
+// across at phone scale and a thumb covers all of it.
+//
+// The lift RAMPS with how far the finger has travelled instead of switching on at the 8 px
+// tap threshold: a step would teleport the piece 44 px up the board the instant a tap became
+// a drag, which is the piece jumping out from under the player rather than getting out of
+// the way. Full lift is reached after 44 px of travel, and sliding back towards the start
+// lowers it again.
+const LIFT_RAMP_PX = 44;
+
+function placingLift() {
+  if (!placing || !placing.moved || !isCoarse()) return 0;
+  const t = Math.min(1, Math.max(0, (placing.dist - TAP_SLOP) / (LIFT_RAMP_PX - TAP_SLOP)));
+  return TOUCH_GHOST_LIFT * t;
+}
+
+function onPlacingMove(ev) {
+  if (!placing || ev.pointerId !== placing.pointerId) return;
+  placing.dist = Math.hypot(ev.clientX - placing.x0, ev.clientY - placing.y0);
+  if (!placing.moved && placing.dist > TAP_SLOP) placing.moved = true;
+  const g = ghostAt(placing.type, ev.clientX, ev.clientY - placingLift());
+  if (g) state.ghost = g;
   ev.stopPropagation();
+  if (ev.cancelable) ev.preventDefault();
+}
 
-  if (!isValidPlacement(type, x, y, null)) {
+function onPlacingUp(ev) {
+  if (!placing || ev.pointerId !== placing.pointerId) return;
+  const g = ghostAt(placing.type, ev.clientX, ev.clientY - placingLift()) || state.ghost;
+  const type = placing.type;
+  ev.stopPropagation();
+  if (ev.cancelable) ev.preventDefault();
+  clearGhost();
+
+  if (!g || !g.valid) {
     playSfx('error');
-    setHintOverride('NO ROOM HERE · TAP OPEN FLOOR', 1500, 'alert');
+    setHintOverride('NO ROOM HERE · ' + (isCoarse() ? 'TAP OPEN FLOOR' : 'CLICK OPEN FLOOR'), 1500, 'alert');
+    refreshHUD();
     return;
   }
 
-  const id = addOptic({ type, x, y, angle: DEFAULT_ANGLE[type] || 0 });
+  const id = addOptic({ type, x: g.x, y: g.y, angle: g.angle });
   if (!id) {
     playSfx('error');
+    refreshHUD();
     return;
   }
   selectOptic(id);
   armedType = null;
   overrideText = '';
-  setHintOverride('DRAG THE HANDLE TO TURN IT', 1600);
+  // A finger turns the piece from anywhere on the ring, not just the dot (js/input.js
+  // handleAt), so the touch copy names the ring and the mouse copy names the handle.
+  setHintOverride(isCoarse() ? 'DRAG THE RING TO TURN IT' : 'DRAG THE HANDLE TO ROTATE IT', 1600);
   refreshHUD();
+}
+
+function onPlacingCancel(ev) {
+  if (!placing || ev.pointerId !== placing.pointerId) return;
+  clearGhost();
+  refreshHUD();
+}
+
+// Runs in the capture phase on window, so it sees a board tap before js/input.js does.
+function onArmedPointerDown(ev) {
+  if (!armedType || placing) return;
+  if (ev.target && ev.target.closest && ev.target.closest('#hud, #modal-root')) return;
+  if (canvasEl && ev.target !== canvasEl) return;
+
+  const g = ghostAt(armedType, ev.clientX, ev.clientY);
+  if (!g) return;
+
+  ev.preventDefault();
+  ev.stopPropagation();
+
+  placing = { pointerId: ev.pointerId, type: armedType, x0: ev.clientX, y0: ev.clientY, moved: false, dist: 0 };
+  state.ghost = g;
+  window.addEventListener('pointermove', onPlacingMove, true);
+  window.addEventListener('pointerup', onPlacingUp, true);
+  window.addEventListener('pointercancel', onPlacingCancel, true);
 }
 
 /* ---------- hint line ---------- */
@@ -256,7 +402,9 @@ function contextualHint() {
 
   if (overrideText && performance.now() < overrideUntil) return { text: overrideText, tone: overrideTone };
   if (armedType) {
-    return { text: 'TAP THE BOARD TO PLACE THE ' + (LABELS[armedType] || armedType) + ' · TAP THE TILE TO CANCEL', tone: 'pinned' };
+    const verb = isCoarse() ? 'TOUCH' : 'CLICK';
+    if (placing) return { text: 'SLIDE TO AIM · RELEASE TO PLACE', tone: 'pinned' };
+    return { text: verb + ' THE BOARD TO PLACE THE ' + (LABELS[armedType] || armedType) + ' · ' + verb + ' THE TILE TO CANCEL', tone: 'pinned' };
   }
   /* Solved: the strip hands itself to USED / PAR. It used to read
      'SOLVED · NEXT LEVEL OR KEEP PLAYING', which is word for word what the solve panel
@@ -268,11 +416,15 @@ function contextualHint() {
   if (drag) {
     const invalid = typeof drag === 'object' && drag.valid === false;
     if (invalid) return { text: 'NO ROOM HERE · RELEASE OVER OPEN FLOOR', tone: 'alert' };
-    return { text: 'RELEASE TO PLACE · ESC TO CANCEL', tone: '' };
+    // ESC is not a key a thumb has.
+    return { text: isCoarse() ? 'RELEASE TO PLACE' : 'RELEASE TO PLACE · ESC TO CANCEL', tone: '' };
   }
   // An explicit press of HINT outranks the selection hint — the player asked for it.
   if (hintPinned && lvl.hint) return { text: String(lvl.hint).toUpperCase(), tone: 'pinned' };
   if (state.selectedId) {
+    // On a phone there is no SHIFT and no DEL, and the piece is turned with a thumb on the
+    // handle, so the desktop line named three things a finger cannot do.
+    if (isCoarse()) return { text: 'DRAG THE RING TO TURN · HOLD THE PIECE TO REMOVE IT', tone: '' };
     return { text: 'DRAG THE HANDLE TO ROTATE · SHIFT FOR FREE ANGLE · DEL TO REMOVE', tone: '' };
   }
 
@@ -281,6 +433,9 @@ function contextualHint() {
     return { text: 'NOTHING LEFT TO PLACE · MOVE A PIECE OR RESET', tone: '' };
   }
   if (usedCount() === 0 && lvl.hint) return { text: String(lvl.hint).toUpperCase(), tone: '' };
+  if (isCoarse()) {
+    return { text: 'TAP A PIECE, THEN TOUCH THE BOARD TO PLACE IT', tone: '', ambient: true };
+  }
   return { text: 'DRAG A PIECE ONTO THE BOARD · DRAG IT AGAIN TO TURN IT', tone: '', ambient: true };
 }
 
@@ -447,6 +602,10 @@ function onKeyDown(ev) {
   if (ev.key === 'Escape' && armedType) disarm(false);
 }
 
+function onViewportChange() {
+  queueMetrics();
+}
+
 /* ---------- public ---------- */
 
 export function refreshHUD() {
@@ -477,6 +636,7 @@ export function initHUD() {
     tag: document.getElementById('level-tag'),
     name: document.getElementById('level-name'),
     chips: document.getElementById('chip-row'),
+    strip: document.getElementById('board-strip'),
     hint: document.getElementById('hint-line'),
     readout: document.getElementById('readout'),
     used: root.querySelector('.readout-used'),
@@ -497,8 +657,11 @@ export function initHUD() {
 
   window.addEventListener('pointerdown', onArmedPointerDown, true);
   window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('resize', queueMetrics, { passive: true });
-  window.addEventListener('orientationchange', queueMetrics, { passive: true });
+  window.addEventListener('resize', onViewportChange, { passive: true });
+  window.addEventListener('orientationchange', onViewportChange, { passive: true });
+  if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+    document.fonts.ready.then(() => { if (started) queueMetrics(); }).catch(() => {});
+  }
 
   started = true;
   syncBoardMetrics();

@@ -59,18 +59,29 @@ const FLAG_H = 27.0;
 
 // REFERENCE.md 4.4 and 1.3: a small machined grey housing box with a slit at its mouth that
 // is brighter than the beam it feeds. Measured directly off ref_001.jpg (the plateau at
-// x 122-140, y 126-144, where the fill holds 76-90 before the beam glow takes over) the
-// reference's block is 18 x 19 frame px at 0.568 px/u — about 32 u long by 33 u across.
-// Growing it backwards until it buried itself in the wall turned it into a 29 x 41 px
-// chimney, taller than the reference's whole housing is wide; it is a free-standing fixture
-// floating clear of the brick, so it no longer reaches for a wall to bolt itself to.
-// The slit is left alone: at 58 u it spans the beam's FWHM, exactly as the reference's
-// does, which means it legitimately stands proud of the box on both sides.
-const EMITTER_W = 35;
-const EMITTER_MIN_LEN = 35;
-const EMITTER_MAX_LEN = 40;
+// x 122-141, y 126-144, where the fill holds before the beam glow takes over) the
+// reference's block is 17 x 18 frame px at 0.568 px/u — about 30 u long by 32 u across.
+// Growing it backwards until it buried itself in the wall turned it into a chimney, taller
+// than the reference's whole housing is wide; it is a free-standing fixture floating clear
+// of the brick, so it no longer reaches for a wall to bolt itself to.
+//
+// The slit is the beam's APERTURE, so its span has to agree with the beam it feeds. Measured
+// on ref_001.jpg the slit's half-maximum extent is 34 px against a 31 px beam FWHM — a ratio
+// of 1.10. Ours rendered 70 u against a 51 u FWHM, a ratio of 1.37, so the mouth was a third
+// wider than the light leaving it and read as a lamp icon rather than as a slot. The value
+// below is authored so the RENDERED extent lands on 1.10x: the geometric bar is 2*SLIT_SPAN
+// and the slit's own halo plus the pipeline bloom widen it by about 7 u on top of that.
+const EMITTER_W = 32;
+const EMITTER_MIN_LEN = 26;
+const EMITTER_MAX_LEN = 30;
 const EMITTER_BURY = 4;
-const SLIT_SPAN = 29;
+const SLIT_SPAN = 26;
+// The flange at the mouth: a shallow faceplate a little wider than the block, so the
+// silhouette has a step in it and the housing reads as two machined parts bolted together
+// rather than as one drawn rectangle. The reference has no such step — this is the one place
+// the emitter is allowed to beat it, and it costs one quad and no noise.
+const EMITTER_PLATE_LEN = 5.5;
+const EMITTER_PLATE_OVER = 3.5;
 
 const MAX_LIGHTS = 16;
 const PLACE_MS = 150;
@@ -118,15 +129,38 @@ const BRICK_DARK = scene('#673D36');
 const BRICK_RIM = scene('#785854');
 const MORTAR = scene('#A47E76');
 
-// Round 3 measured the rendered housing at (106, 105, 116): 1.35x the reference's
-// (91, 89, 92) and carrying a +10 blue cast it should not have. The token in REFERENCE.md
-// is #4D4B50; authored well under that because most of what the box displays is not its own
-// material — it is the slit's bloom falling on it, and the smaller the box gets the larger
-// that share becomes. Darkening #5C5A64 to #4F4C4F made the measured fill go UP, from 92 to
-// 130, purely because the box shrank into the spill. The cast is removed here too.
-const HOUSING = scene('#3E3C40');
-const HOUSING_EDGE = scene('#8A8890');
-const SLIT = scene('#E0DEE1', 3.0);
+// Round 3 chased the housing's fill by darkening the token, and found that darkening it made
+// the MEASURED fill go UP. The reason is worth writing down, because it is the whole defect:
+// the box was never displaying its own albedo. Rendering the housing pure black and capturing
+// it showed the box footprint still reading 0.86 at the mouth and 0.39 at its far end — every
+// bit of that is the slit's bloom falling on it. No fill value can fix a plateau that is 90 %
+// somebody else's light, which is why two rounds of retinting the token went nowhere.
+//
+// The fix is upstream of the fill: SLIT below is authored to sit just under the pipeline's
+// 0.72 bright-pass threshold instead of 0.6 above it, so the mouth stops feeding a floodlight
+// into its own housing. With that done the token can be what the reference measures — the
+// plateau at x 122-141, y 126-144 on ref_001.jpg reads (96, 93, 97), luma 0.369, a touch
+// above the #4D4B50 quoted in REFERENCE.md 4.4 — less the bloom that still lands on it.
+const HOUSING = scene('#56545C');
+const HOUSING_EDGE = scene('#8E8C96');
+// A plate at the mouth catches more of the key than the body behind it: real hardware, and
+// it keeps the step in the silhouette legible when a bright beam sits right against it.
+const HOUSING_PLATE = scene('#666470');
+// The slit peaks at 0.885 on ref_001.jpg against a 0.775 beam core — a ratio of 1.14. Ours
+// ran at 0.988 against a 0.82 core (1.20) and clipped, which is what flooded the housing and
+// made the mouth the brightest object on the board. REFERENCE.md 4.6: only a few hundred
+// pixels in the whole frame pass 250, and they are slit and specular, never a plateau.
+//
+// The gain matters far more than the ratio suggests. `pipeline.js` thresholds its bright pass
+// at 0.72 scene, so a slit authored at 1.16 pushed 0.44 of pure surplus into a six-step blur
+// and painted its own housing with it; authored just under the threshold, the mouth is still
+// the brightest pixel on an unsolved board and its halo collapses to something the size of
+// the reference's. #E0DEE1 inverse-tonemaps to 0.774, so this lands at 0.813.
+const SLIT = scene('#E0DEE1', 0.98);
+// The mouth's own spill, authored on its own instead of as a fraction of the slit so that
+// retuning one does not silently move the other. ref_001.jpg has this dying fast: 3 % of the
+// slit peak 18 px past the slit's end, 0.2 % by 22 px.
+const EMITTER_POOL = scene('#D6D4DC', 0.085);
 
 const MIRROR_BODY = scene('#8F9AA6', 0.85);
 const MIRROR_BACK = scene('#2A2E36');
@@ -265,9 +299,6 @@ uniform float uHoriz;
 uniform vec4 uFace;
 // Per-face overlap in the same order, so a joined edge has no antialiased seam.
 uniform vec4 uGrow;
-// Corner mitres, ordered (-X-Y, +X-Y, -X+Y, +X+Y). The outer ring is four rectangles but
-// the reference's frame is one continuous run of brick, mitred at every corner.
-uniform vec4 uMitre;
 uniform vec3 uLight;
 uniform vec3 uMid;
 uniform vec3 uDark;
@@ -292,7 +323,24 @@ void main() {
 
   vec4 dist = vec4(vLocal.x + h.x, h.x - vLocal.x, vLocal.y + h.y, h.y - vLocal.y);
   float thick = mix(uSize.x, uSize.y, uHoriz);
-  float t = clamp(mix(dist.x, dist.z, uHoriz) / max(thick, 1e-3), 0.0, 1.0);
+
+  // ORCHESTRATOR-NOTES 9.4, the half of it the world-space bond did not reach. The brick
+  // SCALE is continuous — the bond above is computed from vBoard with compile-time constants
+  // and there is no per-rect scale uniform for it to differ by — but the thickness shading
+  // was normalised by each rectangle's OWN thickness, so the same masonry read differently
+  // depending on how wide the slab happened to be. Measured on the SWITCHBACK capture, a
+  // pixel 40 u in from the lit face read 0.314 on the 40 u border wall and 0.434 on the
+  // 160 u interior slab: one image, one key light, one material, two different-looking
+  // walls. That is precisely the "pasted-on rectangle" tell.
+  //
+  // The ramp is a physical depth, so it is measured in board units from the faces and
+  // capped at the board's own wall thickness. A slab thicker than that gets the border's
+  // lit lip, the border's shadow ramp, a flat belly of the same tone the border reaches,
+  // and the border's far-edge rim — instead of a stretched copy of the whole profile.
+  float rampDepth = min(thick, ${WALL_T.toFixed(1)});
+  float dLit = mix(dist.x, dist.z, uHoriz);
+  float t = clamp(dLit / max(rampDepth, 1e-3), 0.0, 1.0);
+  float tFar = clamp((thick - dLit) / max(rampDepth, 1e-3), 0.0, 1.0);
 
   // The bond lives in BOARD space and in ONE orientation for the whole board. Swapping the
   // axes per wall (which is what uHoriz used to do here) rotated the running bond 90 degrees
@@ -309,22 +357,35 @@ void main() {
   float fu = bu - bIdx * ${BRICK_LEN.toFixed(2)};
   float fv = v - course * ${COURSE_H.toFixed(2)};
 
-  // Every slab on the board is lit from the SAME top-left key, so the shading across its
-  // thickness is directional, never symmetric. t is 0 at the lit face (-Y on a horizontal
-  // run, -X on a vertical one) and 1 at the far face.
+  // Every slab on the board is lit from the SAME top-left key, and that key is carried by the
+  // MASONRY — by each course's own bed joint and each brick's own arris — not by one gradient
+  // running the whole way across the band.
   //
-  // The old profile was a rounded extrusion — brightest at BOTH faces, dimmest in the
-  // belly — which put the brightest row on the far edge of every interior slab and drew a
-  // pale stroke all the way round it. Measured on ref_001.jpg, column-averaged across the
-  // interior ledge at y 190-226 and the top band at y 52-80, the reference runs:
-  //   lit face 112-115  ->  belly 88-95  ->  far-edge rim 102-105
-  // i.e. lit/mid 1.27 and rim/mid 1.15 with the maximum ON the lit face, a range of about
-  // 24 luminance levels. Authored here slightly wider than that because the tonemap
-  // compresses it on the way out.
-  float ramp = smoothstep(0.0, 0.78, t);
-  vec3 col = mix(uLight, uMid, min(ramp * 1.45, 1.0));
-  col = mix(col, uDark, smoothstep(0.42, 0.92, t) * 0.55);
-  col = mix(col, uRim, smoothstep(0.84, 1.0, t) * 0.85);
+  // Measured col/row-averaged across the wall thickness on ref_001.jpg, as a percentage of
+  // the band mean, the reference's slab-wide linear drift is -6.7 % (top), +1.4 % (bottom),
+  // +0.4 % (left), +4.4 % (right), and the course/mortar modulation left after that trend is
+  // removed is 5.5 / 6.0 / 3.4 / 6.6 %. Ours ran a -36 / +31 / -30 / +30 % drift against a
+  // 3.8 / 2.9 / 3.2 / 4.3 % modulation: the bevel beat the brick roughly seven to one, which
+  // is exactly what makes a wall read as a mitred picture-frame moulding.
+  //
+  // So the key light is applied per course and per brick, where the reference puts it, and
+  // the slab-wide ramp is cut to the few percent the reference actually carries. t is still
+  // 0 at the face that turns toward the key (-Y on a horizontal run, -X on a vertical one).
+  float cy = clamp(fv / ${COURSE_H.toFixed(2)}, 0.0, 1.0);
+  float cx = clamp(fu / ${BRICK_LEN.toFixed(2)}, 0.0, 1.0);
+  float bedLit = 1.0 - smoothstep(0.0, 0.34, cy);
+  float bedDark = smoothstep(0.58, 1.0, cy);
+  float headLit = 1.0 - smoothstep(0.0, 0.09, cx);
+  float headDark = smoothstep(0.91, 1.0, cx);
+
+  vec3 col = uMid;
+  col = mix(col, uLight, 0.90 * max(bedLit, headLit * 0.62));
+  col = mix(col, uDark, 0.82 * max(bedDark, headDark * 0.62));
+  // What is left of the slab-wide ramp. The rim rides tFar, not t, so on a thick slab the
+  // far-edge lip stays ON the far edge instead of flooding the belly once t saturates.
+  col = mix(col, uLight, 0.085 * (1.0 - t));
+  col = mix(col, uDark, 0.085 * t);
+  col = mix(col, uRim, smoothstep(0.10, 0.0, tFar) * 0.35);
 
   // Per-brick tone. Measured brick-face to brick-face on a beam-free band, ref_001.jpg runs
   // a std of 6.8-7.6 % of the mean with peaks +/-13 %; ours ran 1.3-3.8 % and +/-2-6 %, so
@@ -374,21 +435,17 @@ void main() {
   // (-X, +X, -Y, +Y): x and z look back toward the key, y and w away from it.
   float darkK = max(farR.y * max(open.y, outer.y * 0.55), farR.w * max(open.w, outer.w * 0.55));
   col *= 1.0 - 0.75 * darkK * darkK;
-  float softK = max(litR.x * max(open.x, outer.x), litR.z * max(open.z, outer.z));
-  col *= 1.0 - 0.12 * softK * softK;
-
-  // The board's outside boundary keeps a whisper of the lit lip, on the two faces that turn
-  // toward the key light. It used to be +36 %, which on top of the directional gradient put
-  // the border wall's lit/belly ratio at 1.52 against the interior slab's 1.30 — the very
-  // inconsistency inside one screenshot that the round-3 critic named. ref_001.jpg has the
-  // two within two points of each other (border 1.23, ledge 1.25).
+  // Every face that turns toward the key gets the same lit lip, whether it is the board's
+  // outer boundary or an interior slab's edge — REFERENCE.md 2.2 measures the lit edge as the
+  // brightest row in the slab on both. Giving it only to the outer ring is half of what made
+  // the interior slabs read as rectangles pasted onto somebody else's wall.
   vec4 lipR = smoothstep(vec4(5.0), vec4(0.4), dist);
-  float lipK = max(lipR.x * outer.x, lipR.z * outer.z);
-  col *= 1.0 + 0.10 * lipK;
-
-  float mit = max(max(uMitre.x * cornerSeam(dist.x, dist.z), uMitre.y * cornerSeam(dist.y, dist.z)),
-                  max(uMitre.z * cornerSeam(dist.x, dist.w), uMitre.w * cornerSeam(dist.y, dist.w)));
-  col *= 1.0 - 0.26 * mit;
+  float lipK = max(lipR.x * max(open.x, outer.x), lipR.z * max(open.z, outer.z));
+  col *= 1.0 + 0.13 * lipK;
+  // litR is retained as a hairline softening right at the lit arris, so the lip above does
+  // not terminate on a hard antialiased line.
+  float softK = max(litR.x * max(open.x, outer.x), litR.z * max(open.z, outer.z));
+  col *= 1.0 - 0.05 * softK * softK;
 
   vec2 nrm = mix(vec2(open.y - open.x, 0.0), vec2(0.0, open.w - open.z), uHoriz);
   if (dot(nrm, nrm) < 0.01) nrm = mix(vec2(sign(vLocal.x), 0.0), vec2(0.0, sign(vLocal.y)), uHoriz);
@@ -469,7 +526,11 @@ void main() {
   float d = sdSeg(vLocal, vec2(-uSpan.x, -uSpan.y), vec2(uSpan.x, uSpan.y));
   float core = clamp(1.0 - d / uWidth, 0.0, 1.0);
   float body = pow(core, 0.55);
-  float halo = exp(-d / (uWidth * 2.0)) * 0.14;
+  // The halo is the slit's own scatter, not its glow pool. At 0.14 over a 2x length constant
+  // it reached far enough past the bar to add several units to the mouth's measured span and
+  // to sit on the housing as a second light source; the reference's slit has essentially
+  // none — 3 % of peak one third of a slit-width past the bar, gone two px later.
+  float halo = exp(-d / (uWidth * 1.5)) * 0.06;
   fragColor = vec4(uColor * (body + halo) * window(), 0.0);
 }`;
 
@@ -1341,17 +1402,17 @@ export function createBoardRenderer(gl) {
     const lx = (ca + sa) * SQRT1_2;
     const ly = (ca - sa) * SQRT1_2;
 
-    // A pool of spill behind and around the block, so the housing sits in its own light
-    // instead of on bare black. Drawn first: the box is opaque and covers its middle.
+    // A pool of spill around the mouth, so the housing sits in its own light instead of on
+    // bare black. Drawn first: the box is opaque and covers its middle. It is centred just
+    // BEHIND the mouth rather than half-way down the block — the reference's spill belongs to
+    // the aperture, not to the body — and it is short-range: on ref_001.jpg the surround is
+    // already at 3 % of the slit peak 18 px past the slit's end and at 0.2 % by 22 px.
     const ug = use(progs.glow);
-    gl.uniform2f(ug.uSpan, ca * len * 0.34, sa * len * 0.34);
-    gl.uniform1f(ug.uRadius, 32);
-    gl.uniform1f(ug.uPower, 2.4);
-    // The pool was sized for a 78 u chimney. Against a 35 u block it was washing the whole
-    // housing: the box's measured fill came out BRIGHTER after the fill colour was darkened,
-    // because every part of it now sits inside this spill rather than material.
-    gl.uniform3f(ug.uColor, SLIT[0] * 0.038, SLIT[1] * 0.039, SLIT[2] * 0.044);
-    place(ug, e.x - ca * len * 0.34, e.y - sa * len * 0.34, len * 0.34 + 34, len * 0.34 + 34, 0);
+    gl.uniform2f(ug.uSpan, 0, 0);
+    gl.uniform1f(ug.uRadius, 30);
+    gl.uniform1f(ug.uPower, 2.8);
+    gl.uniform3fv(ug.uColor, EMITTER_POOL);
+    place(ug, e.x - ca * 5, e.y - sa * 5, 34, 34, 0);
     drawQuad();
 
     const ub = use(progs.box);
@@ -1365,13 +1426,27 @@ export function createBoardRenderer(gl) {
     place(ub, bx, by, len / 2 + 5, EMITTER_W / 2 + 5, dir);
     drawQuad();
 
-    // The mouth: brighter than the beam it feeds (0.88 against 0.78), drawn at the beam's
-    // full aperture height and perpendicular to the emitter direction.
+    // The faceplate. One shallow step in the silhouette is the whole difference between a
+    // rectangle and a piece of hardware, and unlike a bolt pattern or a vent it survives
+    // being sat on by the beam's bloom at this size.
+    const plateW = EMITTER_W + EMITTER_PLATE_OVER * 2;
+    const px = e.x - ca * (EMITTER_PLATE_LEN * 0.5);
+    const py = e.y - sa * (EMITTER_PLATE_LEN * 0.5);
+    gl.uniform2f(ub.uSize, EMITTER_PLATE_LEN, plateW);
+    gl.uniform3fv(ub.uFill, HOUSING_PLATE);
+    gl.uniform3fv(ub.uEdge, HOUSING_EDGE);
+    place(ub, px, py, EMITTER_PLATE_LEN / 2 + 5, plateW / 2 + 5, dir);
+    drawQuad();
+
+    // The mouth: brighter than the beam it feeds (0.885 against 0.775 on ref_001.jpg), drawn
+    // at the beam's own aperture height and perpendicular to the emitter direction. It stands
+    // proud of the block on both sides exactly as the reference's does — there the slit is
+    // 34 px against a 32 u block, so the overhang is the reference's, not an accident.
     const us = use(progs.slit);
     gl.uniform2f(us.uSpan, 0, SLIT_SPAN);
     gl.uniform1f(us.uWidth, 2.6);
     gl.uniform3fv(us.uColor, SLIT);
-    place(us, e.x, e.y, 26, SLIT_SPAN + 22, dir);
+    place(us, e.x, e.y, 22, SLIT_SPAN + 16, dir);
     drawQuad();
   }
 

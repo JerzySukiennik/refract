@@ -51,6 +51,27 @@ function searchTraceOpts(traceOpts) {
   if (floor !== undefined && floor > SEARCH_MIN_INTENSITY) return traceOpts;
   return { ...traceOpts, minIntensity: SEARCH_MIN_INTENSITY };
 }
+
+// See the SEGMENT OWNERSHIP CONTRACT at the top of `js/optics/trace.js`. A trace that is
+// only asked a yes/no question -- "does this arrangement solve the board?" -- reads
+// `.solved` and drops the result on the spot, so it can borrow the tracer's pooled
+// segments and allocate nothing. A trace whose result is STORED must not: the search keeps
+// a frontier of past results alive while it traces new candidates, and borrowed segments
+// would be overwritten underneath it, turning every comparison into a comparison of a
+// result against itself. Those calls deliberately pass no flag and keep full ownership.
+//
+// The lane is named for this module and used nowhere else, so a hint requested mid-frame
+// cannot land in whatever pool the renderer's live trace is drawing from.
+const SOLVER_LANE = 'solver-verdict';
+
+function verdictTraceOpts(traceOpts) {
+  return { ...(traceOpts || {}), borrowSegments: SOLVER_LANE };
+}
+
+// Answers `.solved` and nothing else, so the result is safe to borrow.
+function solves(level, optics, traceOpts) {
+  return traceScene(level, optics, traceOpts).solved;
+}
 const norm = (a) => ((a % TAU) + TAU) % TAU;
 const snapAngle = (a) => norm(Math.round(norm(a) / SNAP) * SNAP);
 
@@ -333,13 +354,17 @@ function searchFrom(level, prefix, options) {
   // dropping faint light can only ever ADD stray energy back when the floor is lowered, and
   // stray light of the wrong colour can spoil a receptor. So every hit is re-traced at the
   // caller's own floor, and only the engine's verdict is returned.
-  const confirms = (optics) => traceScene(level, optics, traceOpts).solved;
+  const confirmOpts = verdictTraceOpts(traceOpts);
+  const confirms = (optics) => solves(level, optics, confirmOpts);
   const walls = boardWalls(level);
   const bounds = interior(level);
   const started = now();
   let nodes = 0;
   let timedOut = false;
 
+  // `searchOpts` never carries `borrowSegments`: rootRes and every candidate result below
+  // it are stored in the frontier and read again at the NEXT depth, long after further
+  // traces have run. They must own their segments.
   const rootRes = traceScene(level, prefix, searchOpts);
   nodes++;
   if (rootRes.solved && confirms(prefix)) {
@@ -460,7 +485,7 @@ export function solutionFor(level) {
 export function solutionSolves(level, traceOpts) {
   const optics = solutionFor(level);
   if (!optics.length) return false;
-  return traceScene(level, optics, traceOpts || {}).solved;
+  return solves(level, optics, verdictTraceOpts(traceOpts));
 }
 
 /**
@@ -477,7 +502,7 @@ export function solveLevel(level, options) {
   const optics = solutionFor(level);
   if (!optics.length) return [];
   const opts = options || {};
-  if (opts.verify !== false && !traceScene(level, optics, opts.traceOpts || {}).solved) {
+  if (opts.verify !== false && !solves(level, optics, verdictTraceOpts(opts.traceOpts))) {
     // Still return it. An authored board that no longer solves is a levels.js defect for
     // `tools/validate-levels.mjs` to fail on, not a reason to hand the renderer nothing.
     warnOnce(`stale:${level.id}`, `level ${level.id} solution no longer solves the board; run tools/validate-levels.mjs`);
@@ -490,7 +515,7 @@ export function solveLevel(level, options) {
 function embeddedSolution(level, cap, traceOpts) {
   const optics = solutionFor(level);
   if (!optics.length || optics.length > cap) return null;
-  return traceScene(level, optics, traceOpts || {}).solved ? optics : null;
+  return solves(level, optics, verdictTraceOpts(traceOpts)) ? optics : null;
 }
 
 export function solve(level, options) {
@@ -548,6 +573,8 @@ export function hint(level, placedOptics) {
   const stage = (hintCounters.get(key) || 0);
   hintCounters.set(key, stage + 1);
 
+  // Owned, not borrowed: `current` is still read at the bottom of this function, after the
+  // fallback search below has run hundreds of traces of its own.
   const current = traceScene(level, placed, {});
   if (current.solved) {
     return { text: 'Every receptor is lit. This board is done.', ghost: null };

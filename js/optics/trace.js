@@ -1,4 +1,49 @@
 // The REFRACT raytracer: white beam, mirror reflection, true two-surface prism dispersion.
+//
+// ---------------------------------------------------------------------------------------
+// SEGMENT OWNERSHIP CONTRACT -- read this before calling traceScene.
+//
+// By DEFAULT a trace result owns its segments outright: every segment is a freshly built
+// object and the result stays valid forever, no matter how many further traces run. That
+// is the behaviour the wave-1 author chose deliberately, because callers genuinely hold
+// two results at once and compare them -- `solver.js` keeps a whole beam frontier of past
+// results alive while it traces new candidates, and `tools/test-optics.mjs` compares two
+// consecutive traces segment by segment to prove the tracer is deterministic. Pooling by
+// default would silently turn both of those into a comparison of a result against itself.
+// So the default does not change, and a caller that says nothing keeps full ownership.
+//
+// A caller that provably does NOT retain the result may opt in with:
+//
+//     traceScene(level, optics, { ...opts, borrowSegments: 'my-lane' })
+//
+// and then:
+//
+//   * `result.segments` and the objects inside it are BORROWED from a module-owned pool.
+//   * They are valid only until the NEXT borrowing trace ON THE SAME LANE, which
+//     overwrites them in place. Traces on other lanes, and traces that borrow nothing,
+//     leave them alone.
+//   * Storing the result, its `segments` array, or any segment out of it beyond that point
+//     is a bug. If you later decide you need to keep one, do not borrow: trace again with
+//     no flag and get an owned result.
+//   * `result.receptors`, `result.stats` and the result object itself are always fresh.
+//     Only the segments are pooled, which is where all the volume is -- the heaviest real
+//     level emits 442 segments per trace against 3 receptor records. Measured on FEEDING
+//     THE SECOND: 262.4 KB allocated per owned trace, 16.0 KB per borrowed one.
+//
+// LANES EXIST BECAUSE THE ALTERNATIVE IS A REAL BUG. Two independent subsystems can both
+// be inside a "throwaway" trace at once: the game holds the live trace it is drawing while
+// the hint engine, on the same tick, runs confirmation traces of candidate arrangements.
+// If both borrowed one shared pool the second would scribble over the beams being drawn.
+// A lane name is just a string, so give each subsystem its own and they cannot collide.
+// `borrowSegments: true` is accepted and means the lane literally named 'default'; only
+// use it where you know nothing else borrows.
+//
+// The flag is read off the caller's own `opts` object, never off the merged options, so it
+// cannot leak from one call into the next.
+//
+// traceScene is NOT re-entrant. It never was -- the scene lives in the module-level typed
+// arrays below -- and the option object and segment pool are shared the same way.
+// ---------------------------------------------------------------------------------------
 
 import {
   EPS,
@@ -87,6 +132,21 @@ let recOut = new Float64Array(16);
 let recNm = new Float64Array(16);
 let recCount = 0;
 
+// Receptor identity and the `receptor:<id>` terminal label are rebuilt only when the level
+// actually changes them. They used to be reassembled by string concatenation on every
+// segment that landed on a receptor, which is a fresh string in the innermost loop.
+const recId = [];
+const recTerminal = [];
+const defaultRecId = [];
+
+// The placed-optics list is deduplicated against the level's fixed optics numerically.
+// It used to build a Set of `type|x|y|angle` strings, so a five-optic board allocated a
+// Set plus six strings on every single trace.
+const dedupeX = [];
+const dedupeY = [];
+const dedupeA = [];
+let dedupeCount = 0;
+
 // --- ray stack -----------------------------------------------------------------------
 
 let cap = 512;
@@ -99,6 +159,7 @@ let sI = new Float64Array(cap);
 let sGen = new Int32Array(cap);
 let sIn = new Int32Array(cap);
 let sPerp = new Int32Array(cap);
+let sSide = new Int32Array(cap);
 let sp = 0;
 
 // --- per-cast scratch ----------------------------------------------------------------
@@ -116,6 +177,116 @@ let energyIn = 0;
 let energyTerminated = 0;
 let energyPruned = 0;
 let rayCount = 0;
+
+// --- options ---------------------------------------------------------------------------
+
+// One shared merged-options object. `Object.assign` into an existing object allocates
+// nothing, and every key the tracer reads is a key of TRACE_DEFAULTS, so the first assign
+// fully resets it. `borrowSegments` is deliberately NOT read from here (see the contract
+// at the top of the file) precisely because it is not a TRACE_DEFAULTS key and would
+// therefore survive into the following call.
+const mergedOpts = Object.assign({}, TRACE_DEFAULTS);
+
+function resolveOpts(opts) {
+  Object.assign(mergedOpts, TRACE_DEFAULTS);
+  if (opts) Object.assign(mergedOpts, opts);
+  return mergedOpts;
+}
+
+// --- segment pool ----------------------------------------------------------------------
+
+// One lane per borrowing subsystem. `store` grows to that lane's high-water mark and is
+// never truncated, so after the first few traces a borrowed trace allocates nothing at
+// all. `out` is the array handed to the caller; it holds the same references and only its
+// length moves, so it too settles immediately.
+const lanes = new Map();
+
+function lane(name) {
+  let l = lanes.get(name);
+  if (l === undefined) {
+    l = { store: [], out: [] };
+    lanes.set(name, l);
+  }
+  return l;
+}
+
+let segStore = null;
+let segOut = null;
+let segCount = 0;
+let borrowing = false;
+
+// `side` is a RENDER HINT and nothing else: the number of times this ray has been
+// REFLECTED at a glass surface -- an entry-face Fresnel bounce, an exit-face internal
+// reflection, or a total internal reflection. Mirror bounces do not count; only glass.
+//
+// It exists because a prism's byproducts and its spectrum are physically indistinguishable
+// once they are segments: both are wavelength rays in open air. REFERENCE.md 5.4 measures
+// the byproducts at 0.62x and 0.76x the primary fan's peak, and ours were measured at 1.3x
+// and, in the total-internal-reflection window, at 5x -- the prism's leftovers outshining
+// the spectrum the prism exists to produce. That window is real physics: an equilateral
+// prism at n = 1.52 total-internally-reflects the short half of the band whenever the beam
+// enters within about 30 degrees of the entry face's normal, and that half then leaves
+// through another face as one bright neutral wedge carrying up to 62 % of the input.
+//
+// The tracer does NOT attenuate any of it. Energy conservation is asserted by
+// tools/test-optics.mjs and the receptors read these same intensities, so weighting the
+// byproducts here would change what the puzzle does. `side` only lets render/beams.js draw
+// them subordinate, exactly as `intensityShape` already reshapes drawn white intensity
+// without touching the traced value.
+function newSegment() {
+  return {
+    ax: 0,
+    ay: 0,
+    bx: 0,
+    by: 0,
+    nm: 0,
+    intensity: 0,
+    generation: 0,
+    terminal: null,
+    inside: false,
+    perp: 1,
+    side: 0,
+  };
+}
+
+function emitSeg(ax, ay, bx, by, nm, intensity, generation, terminal, inside, perp, side) {
+  if (borrowing) {
+    let s = segStore[segCount];
+    if (s === undefined) {
+      s = newSegment();
+      segStore[segCount] = s;
+    }
+    s.ax = ax;
+    s.ay = ay;
+    s.bx = bx;
+    s.by = by;
+    s.nm = nm;
+    s.intensity = intensity;
+    s.generation = generation;
+    s.terminal = terminal;
+    s.inside = inside;
+    s.perp = perp;
+    s.side = side;
+    segOut[segCount] = s;
+  } else {
+    // Same field order as newSegment(), so owned and borrowed segments share one hidden
+    // class and every consumer stays monomorphic.
+    segOut[segCount] = {
+      ax,
+      ay,
+      bx,
+      by,
+      nm,
+      intensity,
+      generation,
+      terminal,
+      inside,
+      perp,
+      side,
+    };
+  }
+  segCount++;
+}
 
 function growWalls(n) {
   if (n <= wallX.length) return;
@@ -172,6 +343,7 @@ function growStack() {
   const g = new Int32Array(s); g.set(sGen); sGen = g;
   const h = new Int32Array(s); h.set(sIn); sIn = h;
   const p = new Int32Array(s); p.set(sPerp); sPerp = p;
+  const q = new Int32Array(s); q.set(sSide); sSide = q;
   cap = s;
 }
 
@@ -226,8 +398,24 @@ function addPrism(x, y, angle, side) {
   priCount++;
 }
 
-function opticKey(o) {
-  return o.type + '|' + Math.round(o.x * 100) + '|' + Math.round(o.y * 100) + '|' + Math.round(o.angle * 1e6);
+// Identity of a placed optic, to the same tolerance the old string key used: hundredths of
+// a unit in position and a millionth of a radian in angle, compared as numbers instead of
+// being spelled out as a string.
+function markPlaced(o) {
+  dedupeX[dedupeCount] = Math.round(o.x * 100);
+  dedupeY[dedupeCount] = Math.round(o.y * 100);
+  dedupeA[dedupeCount] = Math.round(o.angle * 1e6);
+  dedupeCount++;
+}
+
+function alreadyPlaced(o) {
+  const x = Math.round(o.x * 100);
+  const y = Math.round(o.y * 100);
+  const a = Math.round(o.angle * 1e6);
+  for (let i = 0; i < dedupeCount; i++) {
+    if (dedupeX[i] === x && dedupeY[i] === y && dedupeA[i] === a) return true;
+  }
+  return false;
 }
 
 function buildScene(level, optics, o) {
@@ -235,6 +423,7 @@ function buildScene(level, optics, o) {
   mirCount = 0;
   priCount = 0;
   recCount = 0;
+  dedupeCount = 0;
 
   const size = level.boardSize || o.boardSize;
   const t = level.wallThickness || o.wallThickness;
@@ -244,34 +433,39 @@ function buildScene(level, optics, o) {
     addWall(0, t, t, size - 2 * t);
     addWall(size - t, t, t, size - 2 * t);
   }
-  const walls = level.walls || [];
-  for (let i = 0; i < walls.length; i++) {
-    const w = walls[i];
-    addWall(w.x, w.y, w.w, w.h);
+  const walls = level.walls || null;
+  if (walls) {
+    for (let i = 0; i < walls.length; i++) {
+      const w = walls[i];
+      addWall(w.x, w.y, w.w, w.h);
+    }
   }
 
-  const seen = new Set();
-  const list = optics || [];
-  for (let i = 0; i < list.length; i++) {
-    const p = list[i];
-    if (!p || (p.type !== 'mirror' && p.type !== 'prism')) continue;
-    seen.add(opticKey(p));
-    if (p.type === 'mirror') addMirror(p.x, p.y, p.angle, p.length || o.mirrorLength);
-    else addPrism(p.x, p.y, p.angle, p.side || o.prismSide);
+  const list = optics || null;
+  if (list) {
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (!p || (p.type !== 'mirror' && p.type !== 'prism')) continue;
+      markPlaced(p);
+      if (p.type === 'mirror') addMirror(p.x, p.y, p.angle, p.length || o.mirrorLength);
+      else addPrism(p.x, p.y, p.angle, p.side || o.prismSide);
+    }
   }
   if (o.includeFixed && level.fixed) {
-    for (let i = 0; i < level.fixed.length; i++) {
-      const p = level.fixed[i];
+    const fixed = level.fixed;
+    for (let i = 0; i < fixed.length; i++) {
+      const p = fixed[i];
       if (!p || (p.type !== 'mirror' && p.type !== 'prism')) continue;
-      if (seen.has(opticKey(p))) continue;
+      if (alreadyPlaced(p)) continue;
       if (p.type === 'mirror') addMirror(p.x, p.y, p.angle, p.length || o.mirrorLength);
       else addPrism(p.x, p.y, p.angle, p.side || o.prismSide);
     }
   }
 
-  const receptors = level.receptors || [];
-  growReceptors(receptors.length + 1);
-  for (let i = 0; i < receptors.length; i++) {
+  const receptors = level.receptors || null;
+  const n = receptors ? receptors.length : 0;
+  growReceptors(n + 1);
+  for (let i = 0; i < n; i++) {
     const r = receptors[i];
     recX[i] = r.x;
     recY[i] = r.y;
@@ -279,8 +473,20 @@ function buildScene(level, optics, o) {
     recIn[i] = 0;
     recOut[i] = 0;
     recNm[i] = 0;
+    let id = r.id;
+    if (id === undefined) {
+      id = defaultRecId[i];
+      if (id === undefined) {
+        id = 'r' + i;
+        defaultRecId[i] = id;
+      }
+    }
+    if (recId[i] !== id) {
+      recId[i] = id;
+      recTerminal[i] = 'receptor:' + id;
+    }
   }
-  recCount = receptors.length;
+  recCount = n;
 }
 
 // Nearest surface along the ray. Results land in the module-level hit* fields.
@@ -354,7 +560,7 @@ function cast(ox, oy, dx, dy, inside) {
   }
 }
 
-function push(ox, oy, dx, dy, nm, intensity, gen, inside, perp, minIntensity) {
+function push(ox, oy, dx, dy, nm, intensity, gen, inside, perp, side, minIntensity) {
   if (!(intensity > 0)) return;
   if (intensity < minIntensity) {
     energyPruned += intensity;
@@ -370,20 +576,37 @@ function push(ox, oy, dx, dy, nm, intensity, gen, inside, perp, minIntensity) {
   sGen[sp] = gen;
   sIn[sp] = inside;
   sPerp[sp] = perp;
+  sSide[sp] = side;
   sp++;
   rayCount++;
 }
 
 /**
  * Trace a level.
+ *
  * @param level  level data (walls, emitter, receptors)
  * @param optics placed optics, runtime shape
- * @param opts   see TRACE_DEFAULTS
+ * @param opts   see TRACE_DEFAULTS, plus the optional `borrowSegments` flag documented in
+ *               the SEGMENT OWNERSHIP CONTRACT at the top of this file: a lane name, or
+ *               `true` for the lane called 'default'. Omit it and the result owns its
+ *               segments for good.
  * @returns {{segments: Array, receptors: Array, solved: boolean, stats: Object}}
  */
 export function traceScene(level, optics, opts) {
   const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-  const o = opts ? Object.assign({}, TRACE_DEFAULTS, opts) : TRACE_DEFAULTS;
+  const o = resolveOpts(opts);
+
+  const borrow = opts ? opts.borrowSegments : undefined;
+  borrowing = borrow === true || typeof borrow === 'string';
+  if (borrowing) {
+    const l = lane(borrow === true ? 'default' : borrow);
+    segStore = l.store;
+    segOut = l.out;
+  } else {
+    segStore = null;
+    segOut = [];
+  }
+  segCount = 0;
 
   buildScene(level, optics, o);
 
@@ -399,27 +622,33 @@ export function traceScene(level, optics, opts) {
   const iors = sampleIORs(samples, o);
   const whiteIOR = prismIOR(550, o.baseIOR, o.spread, o.glass, o.shapeBlend);
 
-  const segments = [];
   energyIn = 0;
   energyTerminated = 0;
   energyPruned = 0;
   rayCount = 0;
   sp = 0;
 
-  const emitters = level.emitters || (level.emitter ? [level.emitter] : []);
-  for (let i = 0; i < emitters.length; i++) {
-    const e = emitters[i];
+  // The transverse frame starts right-handed: +1 means the warm shoulder lies on the
+  // +n side of the ray, with n = (-dy, dx). REFERENCE.md 4.2.
+  const emitters = level.emitters;
+  if (emitters) {
+    for (let i = 0; i < emitters.length; i++) {
+      const e = emitters[i];
+      const amp = e.intensity === undefined ? 1 : e.intensity;
+      energyIn += amp;
+      push(e.x, e.y, Math.cos(e.dir), Math.sin(e.dir), 0, amp, 0, -1, 1, 0, 0);
+    }
+  } else if (level.emitter) {
+    const e = level.emitter;
     const amp = e.intensity === undefined ? 1 : e.intensity;
     energyIn += amp;
-    // The transverse frame starts right-handed: +1 means the warm shoulder lies on the
-    // +n side of the ray, with n = (-dy, dx). REFERENCE.md 4.2.
-    push(e.x, e.y, Math.cos(e.dir), Math.sin(e.dir), 0, amp, 0, -1, 1, 0);
+    push(e.x, e.y, Math.cos(e.dir), Math.sin(e.dir), 0, amp, 0, -1, 1, 0, 0);
   }
 
   let truncated = false;
 
   while (sp > 0) {
-    if (segments.length >= maxSeg) {
+    if (segCount >= maxSeg) {
       truncated = true;
       break;
     }
@@ -433,6 +662,7 @@ export function traceScene(level, optics, opts) {
     const gen = sGen[sp];
     const inside = sIn[sp];
     const perp = sPerp[sp];
+    const side = sSide[sp];
 
     cast(ox, oy, dx, dy, inside);
 
@@ -444,10 +674,10 @@ export function traceScene(level, optics, opts) {
         // 0, 60 or 120 degrees sends a horizontal beam straight into its apex. Left alone
         // it flew the whole board still marked as glass, so every sample drew as a thin
         // hairline instead of a fan. Re-cast it as a ray in open air from the same point.
-        push(ox, oy, dx, dy, nm, intensity, gen + 1, -1, perp, minI);
+        push(ox, oy, dx, dy, nm, intensity, gen + 1, -1, perp, side, minI);
         continue;
       }
-      segments.push(seg(ox, oy, ox + dx * FAR, oy + dy * FAR, nm, intensity, gen, 'escape', false, perp));
+      emitSeg(ox, oy, ox + dx * FAR, oy + dy * FAR, nm, intensity, gen, 'escape', false, perp, side);
       if (recCount > 0 && inside < 0) measure(level, ox, oy, dx, dy, FAR, nm, intensity, acceptK, halfW);
       energyTerminated += intensity;
       continue;
@@ -460,14 +690,13 @@ export function traceScene(level, optics, opts) {
     }
 
     if (hitKind === KIND_WALL) {
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'wall', inside >= 0, perp));
+      emitSeg(ox, oy, hx, hy, nm, intensity, gen, 'wall', inside >= 0, perp, side);
       energyTerminated += intensity;
       continue;
     }
 
     if (hitKind === KIND_RECEPTOR) {
-      const id = receptorId(level, hitIdx);
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'receptor:' + id, false, perp));
+      emitSeg(ox, oy, hx, hy, nm, intensity, gen, recTerminal[hitIdx], false, perp, side);
       energyTerminated += intensity;
       collect(hitIdx, level, nm, intensity, (recX[hitIdx] - ox) * dy - (recY[hitIdx] - oy) * dx, acceptK, halfW);
       continue;
@@ -477,7 +706,7 @@ export function traceScene(level, optics, opts) {
 
     if (hitKind === KIND_MIRROR) {
       if (!canContinue) {
-        segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'depth', false, perp));
+        emitSeg(ox, oy, hx, hy, nm, intensity, gen, 'depth', false, perp, side);
         energyTerminated += intensity;
         continue;
       }
@@ -487,19 +716,19 @@ export function traceScene(level, optics, opts) {
         nx = -nx;
         ny = -ny;
       }
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, false, perp));
+      emitSeg(ox, oy, hx, hy, nm, intensity, gen, null, false, perp, side);
       reflectInto(vec2, dx, dy, nx, ny);
       // A reflection mirrors the ray's transverse frame, so the warm and cool shoulders
       // trade sides. The 10 % the mirror does not return is absorbed here.
       const kept = intensity * mirrorR;
       energyTerminated += intensity - kept;
-      push(hx + nx * SURFACE_OFFSET, hy + ny * SURFACE_OFFSET, vec2[0], vec2[1], nm, kept, gen + 1, -1, -perp, minI);
+      push(hx + nx * SURFACE_OFFSET, hy + ny * SURFACE_OFFSET, vec2[0], vec2[1], nm, kept, gen + 1, -1, -perp, side, minI);
       continue;
     }
 
     // KIND_PRISM
     if (!canContinue) {
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, 'depth', inside >= 0, perp));
+      emitSeg(ox, oy, hx, hy, nm, intensity, gen, 'depth', inside >= 0, perp, side);
       energyTerminated += intensity;
       continue;
     }
@@ -518,11 +747,11 @@ export function traceScene(level, optics, opts) {
       const cosI = -(dx * fx + dy * fy);
       const nGlass = nm ? prismIOR(nm, o.baseIOR, o.spread, o.glass, o.shapeBlend) : whiteIOR;
       const R = useFresnel ? fresnel(cosI, 1, nGlass) : 0;
-      segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, false, perp));
+      emitSeg(ox, oy, hx, hy, nm, intensity, gen, null, false, perp, side);
 
       if (R > 0) {
         reflectInto(vec2, dx, dy, fx, fy);
-        push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity * R, gen + 1, -1, -perp, minI);
+        push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity * R, gen + 1, -1, -perp, side + 1, minI);
       }
 
       const T = intensity * (1 - R);
@@ -533,19 +762,19 @@ export function traceScene(level, optics, opts) {
             const w = samples[k];
             const nk = iors[k];
             if (refractInto(vec2, dx, dy, fx, fy, 1 / nk)) {
-              push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], w, share, gen + 1, hitIdx, perp, minI);
+              push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], w, share, gen + 1, hitIdx, perp, side, minI);
             } else {
               reflectInto(vec2, dx, dy, fx, fy);
-              push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], w, share, gen + 1, -1, -perp, minI);
+              push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], w, share, gen + 1, -1, -perp, side + 1, minI);
             }
           }
         } else {
           const nk = nGlass;
           if (refractInto(vec2, dx, dy, fx, fy, 1 / nk)) {
-            push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, hitIdx, perp, minI);
+            push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, hitIdx, perp, side, minI);
           } else {
             reflectInto(vec2, dx, dy, fx, fy);
-            push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, -1, -perp, minI);
+            push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, -1, -perp, side + 1, minI);
           }
         }
       }
@@ -553,7 +782,7 @@ export function traceScene(level, optics, opts) {
     }
 
     // Leaving the glass (or total internal reflection).
-    segments.push(seg(ox, oy, hx, hy, nm, intensity, gen, null, true, perp));
+    emitSeg(ox, oy, hx, hy, nm, intensity, gen, null, true, perp, side);
     const nGlass = nm ? prismIOR(nm, o.baseIOR, o.spread, o.glass, o.shapeBlend) : whiteIOR;
     let fx = nOutX;
     let fy = nOutY;
@@ -566,15 +795,15 @@ export function traceScene(level, optics, opts) {
       const R = useFresnel ? fresnel(cosI, nGlass, 1) : 0;
       const T = intensity * (1 - R);
       if (T > 0) {
-        push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, -1, perp, minI);
+        push(hx + fx * SURFACE_OFFSET, hy + fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, T, gen + 1, -1, perp, side, minI);
       }
       if (R > 0) {
         reflectInto(vec2, dx, dy, fx, fy);
-        push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity * R, gen + 1, hitIdx, -perp, minI);
+        push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity * R, gen + 1, hitIdx, -perp, side + 1, minI);
       }
     } else {
       reflectInto(vec2, dx, dy, fx, fy);
-      push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity, gen + 1, hitIdx, -perp, minI);
+      push(hx - fx * SURFACE_OFFSET, hy - fy * SURFACE_OFFSET, vec2[0], vec2[1], nm, intensity, gen + 1, hitIdx, -perp, side + 1, minI);
     }
   }
 
@@ -582,6 +811,11 @@ export function traceScene(level, optics, opts) {
     sp--;
     energyPruned += sI[sp];
   }
+
+  const segments = segOut;
+  if (segments.length !== segCount) segments.length = segCount;
+  segOut = null;
+  segStore = null;
 
   const receptorEvals = [];
   let solved = recCount > 0;
@@ -592,7 +826,7 @@ export function traceScene(level, optics, opts) {
     const ok = lit >= o.receptorThreshold && lit >= 3 * stray;
     if (!ok) solved = false;
     receptorEvals.push({
-      id: receptorId(level, i),
+      id: recId[i],
       color: src.color,
       litNm: lit > 0 ? recNm[i] / lit : 0,
       litIntensity: lit,
@@ -607,7 +841,7 @@ export function traceScene(level, optics, opts) {
     receptors: receptorEvals,
     solved,
     stats: {
-      segments: segments.length,
+      segments: segCount,
       rays: rayCount,
       truncated,
       spectralSamples: nSamples,
@@ -652,26 +886,34 @@ function measure(level, ox, oy, dx, dy, tEnd, nm, intensity, acceptK, halfW) {
 }
 
 // Per-sample indices only change when the glass parameters do, so they are computed once
-// per trace instead of once per prism face.
-let iorCacheKey = '';
+// per trace instead of once per prism face. The cache key is compared field by field --
+// spelling it out as a string built a fresh string on every trace just to throw it away.
+let iorKeyLen = -1;
+let iorKeyBase = NaN;
+let iorKeySpread = NaN;
+let iorKeyGlass = null;
+let iorKeyBlend = NaN;
 let iorCache = new Float64Array(0);
 
 function sampleIORs(samples, o) {
-  const key = samples.length + '|' + o.baseIOR + '|' + o.spread + '|' + o.glass + '|' + o.shapeBlend;
-  if (key === iorCacheKey) return iorCache;
-  if (iorCache.length !== samples.length) iorCache = new Float64Array(samples.length);
-  for (let i = 0; i < samples.length; i++) {
+  const n = samples.length;
+  if (
+    n === iorKeyLen
+    && o.baseIOR === iorKeyBase
+    && o.spread === iorKeySpread
+    && o.glass === iorKeyGlass
+    && o.shapeBlend === iorKeyBlend
+  ) {
+    return iorCache;
+  }
+  if (iorCache.length !== n) iorCache = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
     iorCache[i] = prismIOR(samples[i], o.baseIOR, o.spread, o.glass, o.shapeBlend);
   }
-  iorCacheKey = key;
+  iorKeyLen = n;
+  iorKeyBase = o.baseIOR;
+  iorKeySpread = o.spread;
+  iorKeyGlass = o.glass;
+  iorKeyBlend = o.shapeBlend;
   return iorCache;
-}
-
-function receptorId(level, i) {
-  const r = level.receptors[i];
-  return r.id === undefined ? 'r' + i : r.id;
-}
-
-function seg(ax, ay, bx, by, nm, intensity, generation, terminal, inside, perp) {
-  return { ax, ay, bx, by, nm, intensity, generation, terminal, inside, perp };
 }
