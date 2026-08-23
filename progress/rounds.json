@@ -1,7 +1,7 @@
 {
   "project": "REFRACT",
   "tagline": "Steering and dispersing light. Built against a reference, round by round.",
-  "updated": "2026-08-23T01:37:32.056660Z",
+  "updated": "2026-08-23T03:58:39.878411Z",
   "verdictLegend": {
     "reference": "The blind critic picked the reference as the polished commercial game. We lost the round.",
     "ours": "The blind critic picked ours as the polished commercial game. We won the round.",
@@ -74,6 +74,32 @@
         {
           "src": "web/r1-final-levelsGrid.jpg",
           "caption": "Level select, ours alone"
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "title": "Round 2 \u2014 six pieces, every gap measured",
+      "status": "done",
+      "verdict": "reference",
+      "summary": "Six critics, six verdicts to the reference, every one carrying numbers and a line reference. The beam core measured 0.23 percent grain RMS where the reference frame measures 0.96 \u2014 a flawless airbrush gradient against the reference's streaky dust; now 1.05. Rotation, the game's core verb, fired zero audio across all 18 detents of a 90-degree drag despite the tick synth, the sample and the alias all shipping and being wired to nothing; now 18 of 18 with accented magnets at every 15 degrees and haptics on touch. The brick bond direction was per-wall rather than world-space, so every wall taller than wide had its running bond rotated 90 degrees. A lit mirror's own glow was 3.3 times too wide and 26 times too bright off-axis, dissolving the sprite into the beam. And the fan was not a spectrum at all but two saturated lobes with a dark hole where green and yellow belong, because the render palette applied a brightness gamma before additive blending \u2014 which can only integrate linear quantities.",
+      "gap": "The receptor glow overshot enormously. Round 1's critic correctly said receptors read as unlit icons whose halo died 8 px out; the fix went so far the other way that each receptor now paints a saturated blob about 300 px across, and on the dispersion shot the blue receptor obliterates the rainbow fan the level exists to show. Second time in a row a real gap was answered by moving until it looked different rather than moving to the measured value.",
+      "shots": [
+        {
+          "src": "web/r2-folding.jpg",
+          "caption": "Grain, mirror silhouettes, protractor with no ticks"
+        },
+        {
+          "src": "web/r2-dispersion.jpg",
+          "caption": "Fan now neutral near the prism \u2014 but drowned by receptor glow"
+        },
+        {
+          "src": "web/r2-protractor.jpg",
+          "caption": "Protractor ring, handle and readout"
+        },
+        {
+          "src": "web/r2-fresh.jpg",
+          "caption": "Beam core restored: neutral, grained, chiral fringe"
         }
       ]
     }
