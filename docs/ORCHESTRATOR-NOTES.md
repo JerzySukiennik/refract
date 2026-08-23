@@ -298,3 +298,56 @@ leaving about 64 % of the screen empty). Primary target is Safari on an iPhone X
 
 The same lesson applies generally: piece boundaries are drawn for the RENDERER's benefit,
 and a defect that lives across them needs a differently-shaped owner for one round.
+
+---
+
+## 13. Round 3 outcome, and two process faults that were mine
+
+Round 3 went well on craft. Notably, agents stopped overshooting: the receptor-glow builder
+measured the reference itself first (5 % crossing at one ring diameter), took three measured
+steps, re-captured after each, and deliberately stopped just short of the reference rather
+than sailing past it. The beam builder refused to change two of its three assigned defects
+because they were already closed at HEAD, and said so with numbers. That is exactly right.
+
+### 13.1 My briefs carried stale numbers
+
+Twice a builder was handed a defect described with figures from the PREVIOUS round's critic,
+which a round-2 commit had already fixed. The beam builder had to spend its turn proving the
+brief wrong instead of improving anything. **Brief from a fresh measurement of HEAD, never
+from the last round's critic text.** Where a round-N critic's number is quoted into round
+N+1, re-verify it against HEAD first or mark it explicitly as unverified.
+
+### 13.2 The perf test was lying, and I let four agents wave it off
+
+`tools/test-optics.mjs` timed max-of-N traces on `prismLevel` — an EMPTY box where nothing
+absorbs, so every Fresnel reflection survives to bounce for its full depth budget. No real
+board looks like that. It reported "slowest trace 11 ms" and four agents in a row correctly
+sensed the number was unrepresentative and dismissed it as environmental. Each was right
+that the test was bad and wrong that nothing was there.
+
+The real distribution on a real level: **p50 0.98 ms, p99 8.97 ms, max 10.4 ms** on FEEDING
+THE SECOND (442 segments). The median is comfortably inside budget; the p99 is not. The gap
+is allocation — the tracer builds a fresh segment object per segment per call, so a drag at
+60 Hz produces roughly 12k objects a second and the collector periodically stops the world
+for ~9 ms. The player feels that as a hitch on the one interaction that has to be smooth,
+and it will be worse on the target Intel MacBook.
+
+The test now asserts p50 and p99 separately on the heaviest real level and names the cause.
+
+**Lesson: when several independent agents dismiss the same signal, the usual fault is the
+instrument, not the signal.** Fix the instrument before either believing or dismissing it.
+
+### 13.3 Outstanding for round 4
+
+1. **Pool the trace's segment objects** so p99 comes down to the median. `solver.js` holds
+   two results at once, so pooling needs an explicit copy-on-retain, not a silent reuse.
+2. **Mobile, with one owner** covering `js/input.js`, `js/ui/hud.js`, `css/ui.css` and
+   `js/render/gl.js` together — see section 12. Round 3's feel builder closed the parts it
+   owned (rotate handle now 43.8 px against a 44 px target, dock drag works on touch, long
+   press removes, haptics on every event) and correctly reported the rest as not its files:
+   HUD chips still 45x19.8 px against a 44 px minimum, modal buttons 26.5 px tall, text
+   inputs 28.2 px, tap-to-place still draws no ghost, and the board uses 28.7 % of a phone
+   screen with 375 px of dead vertical space.
+3. **The emitter mouth**, which the round-3 beam critic called the single biggest gap and
+   which lives in `board.js`, not `beams.js` — so the beam builder could not touch it. Give
+   it to whoever owns `board.js`.
