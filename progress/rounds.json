@@ -1,7 +1,7 @@
 {
   "project": "REFRACT",
   "tagline": "Steering and dispersing light. Built against a reference, round by round.",
-  "updated": "2026-08-22T21:42:06.417392Z",
+  "updated": "2026-08-23T01:37:32.056660Z",
   "verdictLegend": {
     "reference": "The blind critic picked the reference as the polished commercial game. We lost the round.",
     "ours": "The blind critic picked ours as the polished commercial game. We won the round.",
@@ -42,6 +42,38 @@
         {
           "src": "web/r0-beam-detail.jpg",
           "caption": "Beam detail \u2014 chiral fringe working"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title": "Round 1 \u2014 five pieces judged blind",
+      "status": "done",
+      "verdict": "reference",
+      "summary": "Five independent critics with fresh context ran the game, captured their own screenshots and compared them blind against reference frames of the same kind. Every verdict went to the reference, with measurements attached: receptors drawn as stroked icons whose halo dies 8 px out where the reference's lamps light the room; top-right chips 43 percent too wide and 16 percent too short, aspect 3.19:1 against the reference's 1.89:1; a dispersion fan that never desaturates, minimum saturation 0.21 rising to 0.80 where the reference is flat neutral grey below 0.10 near the prism. Builders closed all five. Receptors now pool real coloured light onto the board, the emitter is a machined housing with a slit brighter than the beam it feeds, and the beam finally has grain. Levels went from 8 of 24 validating to 24 of 24 once every level carried its own verified solution.",
+      "gap": "Restoring the beam overshot. Told it was too fat and blown out, the builder removed the hot core entirely and pushed the red and blue channel offsets so far apart that the fringe split into two flat bands with no white between them. One defect traded for a worse one.",
+      "blind": [
+        {
+          "src": "web/r1-blind-fresh.jpg",
+          "caption": "Blind pair as the critic saw it \u2014 unlabelled, order randomised"
+        }
+      ],
+      "shots": [
+        {
+          "src": "web/r1-final-fresh.jpg",
+          "caption": "Receptors lighting the room; emitter housing"
+        },
+        {
+          "src": "web/r1-final-dispersion.jpg",
+          "caption": "Dispersion fan reaching three receptors"
+        },
+        {
+          "src": "web/r1-final-solvedModal.jpg",
+          "caption": "Solve panel \u2014 beats the reference's single button"
+        },
+        {
+          "src": "web/r1-final-levelsGrid.jpg",
+          "caption": "Level select, ours alone"
         }
       ]
     }
