@@ -188,14 +188,18 @@ measuring in frame pixels without converting through the board scale. Do not cha
 
 What is still wrong is brightness distribution, in two specific ways:
 
-### 10.1 The grain is far too strong and is eating the core
+### 10.1 RETRACTED — I was wrong about the grain
 
-REFERENCE.md 4.3 specifies authoring at 4–6 % RMS. What renders reads more like 20–30 %:
-the core is visibly streaky and semi-transparent, broken by dark longitudinal gaps, so the
-beam looks like a translucent smear rather than a solid bar of light with texture in it.
-The reference core is SOLID — grain modulates it by a few percent, it does not perforate
-it. Measure the actual rendered RMS along the core centreline and bring it to 4–6 %. Keep
-the anisotropy (about 3 px correlation across, 8–18 px along); only the amplitude is wrong.
+I wrote here that the grain was far too strong and was perforating the core. That was an
+eyeball call and it is wrong. The round-2 beam critic measured the rendered output
+properly: **0.23 % RMS on our beam centreline against 0.96 % measured on the reference
+frame**, using a 13-px running-mean subtraction on the residual. The grain is roughly four
+times too WEAK, not too strong, even though the shader comment claims to author 4.6 %.
+Something between the authored amplitude and the final composite is swallowing it.
+
+Keep this retraction visible rather than deleting it: a measured number beats an
+impression, and the streaky, semi-transparent look I was reacting to comes from the beam
+being too dim overall — see 10.2 — not from noise eating the core.
 
 ### 10.2 There is almost no bloom halo
 
@@ -208,4 +212,10 @@ radius and intensity must be large enough to produce a visible halo. Verify by m
 how far from the beam centreline the frame is still measurably above the empty-board black,
 and compare that distance against the same measurement on ref_001.jpg.
 
-Fixing 10.1 without 10.2 will produce a clean but lifeless beam. Both, together.
+### 10.3 Width is correct — do not chase it
+
+Our FWHM measures about 57 board units against the reference's 54.6. Anyone reporting the
+beam as "too thin" or "too fat" is measuring in frame pixels without converting through the
+board scale: the reference frame is 720 px wide with a 568 px board (0.568 px per unit),
+our captures are 1440 px with a ~1130 px board (1.13 px per unit). Convert before comparing.
+
