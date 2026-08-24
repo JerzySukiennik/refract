@@ -478,3 +478,25 @@ where the fan is. I measured the fan and attributed it to the lamp.
 
 The change was reverted in full. It was chasing an artifact, it achieved nothing it was
 aimed at, and it pushed one real number past the reference in the process.
+
+### 15.2 Four for four — the phone layout was already right
+
+I claimed the phone layout stranded the chrome at the extremes with "roughly 280 px of dead
+black" in the middle, and changed the CSS to anchor the dock to the board. Measuring the
+result made it worse — one 201 px void instead of two balanced bands — and reading
+`js/render/gl.js` afterwards showed why:
+
+```js
+// Where the board sits inside the band left over after the chrome: 0.5 centres it.
+narrowBias: 0.5,   // "131 px under the title against 133 px over the dock at 375x812"
+```
+
+The bands were already deliberately balanced to within 2 px, by an owner who had measured
+them and written the numbers down. A square board on a 2.16:1 phone simply cannot fill the
+screen; those bands are the geometry, not a defect. My change also silently fought the layout
+logic, which reserves the dock's space when centring — anchoring the dock elsewhere left that
+reserve pointing at nothing.
+
+Reverted in full. **The rule in section 15 now has a corollary I keep proving: before
+"fixing" a layout, read the code that produced it.** In this case and in the receptor case,
+the answer was in a comment attached to the constant I was about to change.
