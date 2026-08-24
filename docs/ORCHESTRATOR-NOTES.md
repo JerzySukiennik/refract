@@ -403,11 +403,38 @@ so the board is too open to force a long path — the solver finds
 `prism@500,200 + mirror@200,550 + mirror@300,350`. Lowering par kept the game honest but
 cost the finale its weight.
 
-The fix is geometry, not par: add interior structure so a fan thrown near the emitter cannot
-reach all three receptors, forcing the beam to travel before it is split. The solver is the
-verifier — change walls, re-run `node tools/validate-levels.mjs`, and iterate until the
-minimum is back at 5 with the authored solution intact. Do not simply raise par; the
-validator will correctly reject it.
+**RESOLVED 2026-08-23, and not the way this note expected.** I built `tools/tune-terminus.mjs`
+to search geometry variants against the solver and tried eight designs across two strategies:
+
+1. **Wall mazes** — emitter cages, shafts, doglegs, split rooms. Every one came back either
+   *inconclusive* (the k=5 search exceeded a 20 s budget) or *unsolvable*. A shaft narrow
+   enough to stop a prism fanning early also stops the beam reaching anything.
+2. **Colour as a structural constraint** — the more interesting idea. `test-optics` measures
+   the minimum prism-to-receptor distance at which each band can be satisfied: blue 250,
+   green 375, cyan 400, red 550, orange 625. Baseline TERMINUS used blue/cyan/green, so a
+   prism dropped 100 u below the emitter was already far enough for all three. Demanding
+   orange or red should force the prism far away, and force mirrors to get the beam there.
+   It does — but too well: two variants came back *conclusively unsolvable at 5 optics*.
+   Red at 550 u and orange at 625 u simultaneously, from one fan, does not fit on a
+   1000 u board. This matches the optics builder's own warning that yellow at 725 u is
+   "essentially a diagonal-only colour".
+
+So par 5 is not reachable here without a wall maze the solver cannot verify in reasonable
+time, and I stopped rather than burn more compute on one level's ambition while the blind
+test still goes to the reference on craft.
+
+**What I did instead, which needed no search at all: removed the slack.** TERMINUS shipped
+`mirror: 4, prism: 1` against a par of 3. The player had two spare mirrors on the final
+board. The par-3 solution is exactly one prism and two mirrors, so the inventory is now
+`mirror: 2, prism: 1` — every piece must be placed perfectly and there is nothing to waste.
+That is how puzzle games actually make a finale demanding, and it is verifiable by
+inspection rather than by a search that times out.
+
+Par 3 with zero slack is an honest finale. Par 5 padded with spares was not.
+
+If someone wants to revisit this: the search is the bottleneck, not the design space.
+`solve()` needs either a much better pruning heuristic or a several-minute budget before
+"no 4-optic solution exists" is a claim worth making about an open board.
 
 ---
 

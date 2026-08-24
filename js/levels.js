@@ -551,9 +551,9 @@ export const LEVELS = [
       { x: 600, y: 700, color: 'cyan' },
       { x: 650, y: 825, color: 'green' },
     ],
-    inventory: { mirror: 4, prism: 1 },
+    inventory: { mirror: 2, prism: 1 },
     fixed: [],
-    hint: 'Everything you have learned, on one board.',
+    hint: 'Three pieces, no spares. Everything you have learned, on one board.',
     solution: [
       { type: 'prism', x: 500, y: 200, angle: 265 * DEG },
       { type: 'mirror', x: 200, y: 550, angle: 80 * DEG },
