@@ -316,15 +316,21 @@ function boot() {
     // Glass and metal do not land the same way: a prism gets the glass samples.
     call(audioPlay, o.type === 'prism' ? 'place_prism' : 'place', { panX: o.x });
     buzz('place');
-    broadcast({ type: 'add', optic: { ...o } });
+    // net.js speaks {kind, id, flat fields}; state.js speaks {type, optic:{...}}. These are
+    // two different vocabularies and nothing translated between them, so every broadcast hit
+    // `OP_KINDS.has(undefined)` and was silently dropped. Multiplayer looked connected and
+    // synced nothing.
+    broadcast({ kind: 'place', id: o.id, type: o.type, x: o.x, y: o.y, angle: o.angle });
   });
   on('optic:remove', (o) => {
     call(audioPlay, 'remove', { panX: o.x });
     buzz('remove');
-    broadcast({ type: 'remove', id: o.id });
+    broadcast({ kind: 'remove', id: o.id });
   });
-  on('optic:move', (o) => broadcast({ type: 'update', optic: { ...o } }));
-  on('optic:rotate', (o) => broadcast({ type: 'update', optic: { ...o } }));
+  // Move and rotate are separate ops on the wire: net.js coalesces them per optic, and
+  // sending a full snapshot for a rotation would fight a concurrent drag by another player.
+  on('optic:move', (o) => broadcast({ kind: 'move', id: o.id, x: o.x, y: o.y }));
+  on('optic:rotate', (o) => broadcast({ kind: 'rotate', id: o.id, angle: o.angle }));
   on('drag:start', (d) => {
     if (d && d.kind === 'move') {
       call(audioPlay, 'pick', { panX: d.x });
@@ -413,6 +419,38 @@ function boot() {
     const id = roomId || 'lobby';
     const who = name || state.me.name || 'PLAYER';
     room = await net.joinRoom(id, who);
+
+    // Subscribe to the room. Without this the game was SEND-ONLY: it broadcast every
+    // placement and cursor move and applied nothing coming back, so two clients could join
+    // the same room, both report success, and never see each other or each other's optics.
+    // applyRemote and setPlayers were already imported here and never called.
+    if (room && room.ok && typeof room.on === 'function') {
+      // The roster arrives as a Map keyed by uid. Our own seat is dropped: the local cursor
+      // is drawn from live pointer state, and echoing it back would render a second, laggy
+      // copy of our own pointer a few frames behind the real one.
+      room.on('players', (map) => {
+        const roster = {};
+        for (const [uid, p] of map) {
+          if (uid === room.uid) continue;
+          roster[uid] = { id: uid, name: p.name, color: p.color, x: p.x, y: p.y };
+        }
+        setPlayers(roster);
+      });
+
+      // 'update' covers both arrival and movement: applyRemote pushes the optic when it has
+      // not seen the id before, and mutates it in place when it has. net.js has already
+      // filtered out our own ops, so this cannot echo.
+      const applyOptic = (o) => applyRemote({
+        type: 'update',
+        optic: { id: o.id, type: o.type, x: o.x, y: o.y, angle: o.angle, owner: o.claim || null },
+      });
+      room.on('optic', applyOptic);
+      room.on('optics', (all) => { for (const o of all.values()) applyOptic(o); });
+      room.on('optic-remove', ({ id: opticId }) => applyRemote({ type: 'remove', id: opticId }));
+      room.on('level', (index) => applyRemote({ type: 'level', index }));
+      room.on('status', (s) => emit('net:status', s));
+    }
+
     setMode('multi', id);
     setPlayer(state.me.id || `p${Math.floor(Math.random() * 1e6)}`, who, state.me.color);
     return room;
