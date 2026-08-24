@@ -500,3 +500,60 @@ reserve pointing at nothing.
 Reverted in full. **The rule in section 15 now has a corollary I keep proving: before
 "fixing" a layout, read the code that produced it.** In this case and in the receptor case,
 the answer was in a comment attached to the constant I was about to change.
+
+---
+
+## 16. The wall's across-thickness profile — an open, measured disagreement
+
+**Do not change a wall constant without reading this first.** Two rounds have now measured
+this surface with different estimators and reached opposite conclusions, and a third round
+that just edits a constant will ping-pong it.
+
+### The estimator
+
+Profile a wall band ACROSS its thickness, averaging ALONG its length. Averaging along the
+length cancels per-brick jitter, so what survives is the wall's structural shape. Fit and
+remove a straight line; report the residual RMS as a percentage of the band mean. Sample on
+beam-free stretches only.
+
+```
+ours       top +3.0 % drift, 4.9 % residual | bottom -1.4 %, 6.5 % | left -3.4 %, 2.5 %
+reference  top -10.7 %,     25.3 %          | bottom +50.1 %, 24.1 % | left -3.0 %, 24.1 %
+```
+
+Ours averages **4.6 %** residual, the reference **24.5 %** — 5.3x flatter, consistently on
+all three walls.
+
+### Why this is not simply "add more brick"
+
+I assumed bed joints and chased them. They are not the term: separating the bed joint from
+the head joint (they share one distance term, `je = min(jx, jy * 1.08)`, which IS a real
+conflation — pulling the measured-hot head joints back dragged the bed joints down with them)
+and sweeping the bed weight from 0.28 to 0.80 moved the residual only 4.7 % to 6.4 %.
+
+The reference's residual is not joint texture. It is **shape**: its drift figures of -10.7 %
+and +50.1 % mean the brightness profile across the thickness is strongly curved — lit at one
+edge, falling through the belly, with a rim at the far edge — and a linear detrend leaves a
+large residual precisely because the profile is not linear. Ours is nearly flat, so almost
+nothing survives the detrend.
+
+### The disagreement
+
+Round 4's board-art critic measured our across-thickness drift at -19.8 % to -30.6 % against
+a reference of -0.8 % to -7.3 % and called it "2.7x to 38x too strong", and the round-4
+builder flattened the wall to match. That flattening is why the drift numbers are now good.
+But measured on ref_001 myself, on beam-free bands, the reference's own drift is -10.7 % /
++50.1 % / -3.0 % — not the -0.8 % to -7.3 % that round was working from. The two rounds
+sampled different bands and got different answers about the same wall.
+
+### How to settle it
+
+Not by editing a constant. By agreeing the band first: publish the exact pixel rectangles,
+confirm they are beam-free in BOTH images, and confirm whether the reference's bottom wall
+(+50.1 %) is picking up light from the beam that terminates near it, which would make it an
+outlier rather than evidence. Only then decide whether our wall should be re-curved, and by
+how much.
+
+I reverted my own bed/head split rather than land a half-measure on top of an unsettled
+number. The conflation is real and worth fixing, but it should be fixed by whoever settles
+the band question, in the same pass, with one estimator both sides agree on.
