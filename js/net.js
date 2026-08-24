@@ -246,7 +246,7 @@ export function isNetAvailable() {
 /* ----------------------------------------------------------------- helpers */
 
 function sanitizeName(name) {
-  const s = String(name ?? '').replace(/[\s -]+/g, ' ').trim();
+  const s = String(name ?? '').replace(/[\s\x00-\x1f]+/g, ' ').trim();
   return (s || 'PLAYER').slice(0, 16).toUpperCase();
 }
 
@@ -345,6 +345,14 @@ async function attachRoom(sdk, code, displayName) {
 
   let left = false;
   let online = false;
+  // Declared here, not at the handle literal below, because the `.info/connected` listener
+  // registered further down fires IMMEDIATELY with Firebase's cached value -- before this
+  // function has reached the literal. Reading a `const handle` from that callback threw
+  // "Cannot access 'handle' before initialization" out of the temporal dead zone, which
+  // aborted the rest of joinRoom, so the players listener was never attached and no client
+  // ever saw another. Two clients could both report a successful join into the same room
+  // and sit there with an empty roster.
+  let handle = null;
   let clockOffset = 0;
   const now = () => Date.now() + clockOffset;
 
@@ -428,7 +436,7 @@ async function attachRoom(sdk, code, displayName) {
     const connected = snap.val() === true;
     if (connected === online) return;
     online = connected;
-    handle.online = connected;
+    if (handle) handle.online = connected;
     bus.emit('status', { state: connected ? 'online' : 'offline', roomId: code });
     if (connected && !left) {
       await armDisconnect();
@@ -706,10 +714,10 @@ async function attachRoom(sdk, code, displayName) {
   }
 
   /* ---- handle ---- */
-  const handle = {
+  handle = {
     mode: 'multi',
     ok: true,
-    online: false,
+    online,
     reason: '',
     roomId: code,
     uid,
