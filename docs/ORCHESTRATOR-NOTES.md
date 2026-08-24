@@ -408,3 +408,46 @@ reach all three receptors, forcing the beam to travel before it is split. The so
 verifier — change walls, re-run `node tools/validate-levels.mjs`, and iterate until the
 minimum is back at 5 with the authored solution intact. Do not simply raise par; the
 validator will correctly reject it.
+
+---
+
+## 15. My visual impressions have been wrong every time I checked them, 2026-08-23
+
+Three claims I made confidently by eye this session, each contradicted by measurement
+minutes later:
+
+| I said | Measurement said |
+|---|---|
+| "The beam's grain is too strong" | 0.23 % RMS against the reference's 0.96 % — four times too WEAK |
+| "The fan has almost no colour" | chroma 18.8 / 43.9 / 53.5 at increasing radius against the reference's 20.2 / 42.0 / 44.9 — matches or exceeds it |
+| "The receptor glows are gigantic and swallow the fan" | 50 % falloff at 1.5–1.9x ring radius against the reference's 1.4–3.1x — ours is TIGHTER |
+
+Three for three. There is a pattern and it is not random: I look at a rendered frame, the
+most salient thing in it dominates my judgement, and I report that salience as a defect.
+Bright things read as "too bright", subtle things read as "missing". The reference frames
+are 720x694 JPEGs and ours are 1440x1388 PNGs, so at a glance I am also comparing across a
+2x scale difference and a compression difference without accounting for either.
+
+**Rule for me, binding: I do not put an eye-based visual claim into a builder's brief.**
+Either I measure it first, or I hand the critic the scene and let it measure. A brief is
+expensive — an agent spends its whole turn on what I write — and I have now sent agents
+after a stale timing number AND been on the verge of sending one after three imaginary
+visual defects.
+
+What I may still do by eye: notice that something is worth measuring, and judge whether a
+frame reads as a game rather than as a render. Salience is a fine detector and a terrible
+instrument.
+
+### 15.1 The clipping trap, twice
+
+Chasing the receptor peak, I scaled its scene radiance by 0.80 and the displayed peak did
+not move at all — 246.7 before and after. The reason was already written in a comment three
+lines above the constant I edited: the stroke clips at 1.38 before bloom, so scaling scene
+radiance barely moves the displayed value. Round 3 hit this exact trap and documented it.
+I edited the file without reading the comment attached to the thing I was editing.
+
+Also: my "5.7x tail" on that receptor was the dispersion fan. Down-left of that receptor is
+where the fan is. I measured the fan and attributed it to the lamp.
+
+The change was reverted in full. It was chasing an artifact, it achieved nothing it was
+aimed at, and it pushed one real number past the reference in the process.

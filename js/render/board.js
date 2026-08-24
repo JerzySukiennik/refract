@@ -832,9 +832,20 @@ void main() {
   // for every interior fragment), so an untouched prism sitting in the dark rendered a flat
   // grey-blue plate at 55-63/255 over a 1-4/255 floor.
   float litK = clamp(uLitAmount, 0.0, 1.0);
-  vec3 bodyTint = mix(vec3(0.62, 0.66, 0.72), uLitColor, clamp(uLitAmount * 1.3, 0.0, 1.0));
+  // ROUND 5, measured: the body sat +114/255 over its own local ground where REFERENCE.md 6.2
+  // measures +8 to +14, and its RGB delta ran green-biased (+111 / +128 / +104) -- the olive
+  // cast that made this read as a filled triangle rather than glass. Two causes. The lit
+  // multiplier below was 21x at full brightness, and the tint leaned the whole body toward
+  // uLitColor, which for a dispersing prism is sampled from the middle of the fan -- i.e.
+  // green, the one hue REFERENCE.md 5.2 says is the LEAST saturated part of a real spectrum.
+  // Glass is almost absent except at its edges and where light is genuinely inside it.
+  // uLitColor is desaturated toward its own luminance before it is allowed near the body,
+  // so the fan's mid-band cannot paint the glass green.
+  float litLum = dot(uLitColor, vec3(0.2126, 0.7152, 0.0722));
+  vec3 litNeutral = mix(vec3(litLum), uLitColor, 0.35);
+  vec3 bodyTint = mix(vec3(0.66, 0.68, 0.72), litNeutral, clamp(uLitAmount * 0.30, 0.0, 0.24));
   float depth = smoothstep(0.0, uR * 0.9, -d);
-  vec3 body = bodyTint * (0.009 + 0.020 * depth) * (1.0 + 20.0 * uLitAmount);
+  vec3 body = bodyTint * (0.009 + 0.020 * depth) * (1.0 + 1.45 * uLitAmount);
 
   vec2 a = vec2(-uR * 0.5, -uR * 0.866);
   vec2 b = vec2(uR * 0.72, 0.0);
@@ -861,7 +872,9 @@ void main() {
   add += mix(uEdge, uLitColor, 0.85 * litK) * path * (0.10 + 1.30 * uLitAmount);
   add += mix(uEdge, uLitColor, 0.7 * litK) * halo;
 
-  float alpha = inside * uAlpha * 0.55;
+  // Glass occludes barely anything. At 0.55 the triangle sat on the board as a plate with a
+  // visible flat boundary; the board behind it must stay legible through it.
+  float alpha = inside * uAlpha * 0.16;
   vec3 total = col * alpha + add * uAlpha * window();
   // Same ceiling discipline as the mirror: the outline may be near-white, the glass may not.
   float lim = mix(0.34, 0.90, edge) * (1.0 + 0.9 * clamp(uLitAmount, 0.0, 1.0)) * mix(1.0, 0.34, uGhost);

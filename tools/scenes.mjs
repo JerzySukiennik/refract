@@ -53,9 +53,11 @@ export const SCENES = {
     ref: 'ref_030.jpg',
     kind: 'Tight crop on a prism and its fan.',
     note: 'Banding is the failure mode. Must read as one continuous wedge.',
-    // Recalibrated: the prism on SWITCHBACK sits at ~0.32, 0.51 of the frame and throws
-    // its fan up and to the right, so the old lower-left crop framed empty board.
-    crop: { x: 0.24, y: 0.09, w: 0.48, h: 0.47 },
+    // Derived from where the prism actually is, biased along the fan. A fixed rectangle here
+    // went stale twice when the scripted level changed under it.
+    cropAround: 'prism',
+    cropSpan: { w: 0.62, h: 0.46 },
+    cropBias: { x: 0.22, y: -0.18 },
     ops: [{ scripted: 'dispersion' }],
   },
 
@@ -64,11 +66,9 @@ export const SCENES = {
     ref: 'ref_010.jpg',
     kind: 'A selected optic with its protractor ring, handle and angle readout.',
     note: 'Ring radius, stroke, opacity, ticks, handle dot, readout typography.',
-    // The scripted optic sits at board (500,500), i.e. the centre of the board, which lands
-    // near the middle of the frame -- not at its left. The old window stopped at x=0.48 and
-    // sliced the ring off at the crop's right edge, so the one scene whose whole job is to
-    // show the protractor never actually showed it. Centred on the optic instead.
-    crop: { x: 0.28, y: 0.31, w: 0.42, h: 0.34 },
+    // Centred on the selected optic itself rather than on a guessed rectangle.
+    cropAround: 'selected',
+    cropSpan: { w: 0.42, h: 0.34 },
     ops: [{ scripted: 'protractor' }],
   },
 

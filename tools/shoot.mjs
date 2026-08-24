@@ -142,9 +142,38 @@ for (const name of scenes) {
 
   await new Promise(r => setTimeout(r, 450));
 
-  const clip = scene.crop
-    ? { x: scene.crop.x * W, y: scene.crop.y * H, width: scene.crop.w * W, height: scene.crop.h * H }
-    : undefined;
+  // A fixed crop rectangle goes stale the moment a scripted scene picks a different level,
+  // and it has done so twice: the one scene whose whole job was to show the protractor
+  // stopped containing it, and fanDetail framed empty brick. cropAround asks the page where
+  // the subject actually is and centres on it, so a level redesign cannot silently blind a
+  // critic's evidence.
+  let clip;
+  if (scene.cropAround) {
+    const c = await page.evaluate(async (what) => {
+      const R = window.REFRACT;
+      const gl = await import('/js/render/gl.js');
+      const t = gl.boardToPixel(window.innerWidth, window.innerHeight);
+      const o = what === 'selected'
+        ? R.state.optics.find(x => x.id === R.state.selectedId)
+        : R.state.optics.find(x => x.type === what);
+      if (!o) return null;
+      return { x: t.ox + o.x * t.scale, y: t.oy + o.y * t.scale };
+    }, scene.cropAround).catch(() => null);
+    if (c) {
+      const cw = (scene.cropSpan?.w ?? 0.5) * W, ch = (scene.cropSpan?.h ?? 0.42) * H;
+      const bx = scene.cropBias?.x ?? 0, by = scene.cropBias?.y ?? 0;
+      clip = {
+        x: Math.max(0, Math.min(W - cw, c.x - cw / 2 + bx * cw)),
+        y: Math.max(0, Math.min(H - ch, c.y - ch / 2 + by * ch)),
+        width: cw, height: ch,
+      };
+    } else {
+      console.error(`  cropAround '${scene.cropAround}' found nothing in scene ${name}`);
+    }
+  }
+  if (!clip && scene.crop) {
+    clip = { x: scene.crop.x * W, y: scene.crop.y * H, width: scene.crop.w * W, height: scene.crop.h * H };
+  }
 
   const file = path.join(outDir, `${prefix ? prefix + '-' : ''}${name}.png`);
   await page.screenshot({ path: file, clip, captureBeyondViewport: false });
