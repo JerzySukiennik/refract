@@ -390,3 +390,45 @@ and expand `rooms/TEST` while dragging.
   solo handle and a uid-prefixed key such as `k3f81a-5` on a multiplayer one, so the same
   call site is correct in both modes.
 - `claimOf(id)` is designed to be polled per frame from the renderer. Do not cache it.
+
+---
+
+## 8. Deployed and verified, 2026-08-23
+
+The rules in §5 were finally merged and deployed. Three faults had to be fixed before two
+clients could actually see each other, and each one alone was enough to make multiplayer
+silently do nothing while reporting success.
+
+1. **No `refract` branch in the live rules.** Every write was denied. §5 predicted this exact
+   symptom in its failure table and it still shipped that way for days, because nothing in
+   the build exercised multiplayer — screenshots prove a frame renders, not that a game works.
+2. **`main.js` never subscribed to the room.** `net.js` emits `players`, `optic`, `optics`,
+   `level` and `status`; nothing listened. `applyRemote` and `setPlayers` were already
+   imported into `main.js` and never called. The game was send-only.
+3. **The two modules spoke different vocabularies.** `net.js` expects
+   `{kind:'place'|'move'|'rotate'|'remove', id, x, y, angle}`; `main.js` sent
+   `{type:'add'|'update', optic:{...}}`. `OP_KINDS.has(undefined)` is false, so every
+   broadcast was dropped without a warning.
+
+### The test that found it
+
+`node tools/smoke.mjs` drives two real browsers into one room, checks the rosters both ways,
+places a mirror on A and asserts it arrives on B at the same coordinates.
+
+**Give each client its own browser context.** Firebase anonymous auth persists per origin in
+IndexedDB, so two pages in one profile authenticate as the SAME uid, write to the same
+presence seat and clobber each other. The symptom is a roster that shows the other player and
+never yourself, with a stuck size of 1 — indistinguishable at a glance from multiplayer being
+broken. `browser.createBrowserContext()` per client fixes it.
+
+### Before touching the shared rules again
+
+`node tools/rules-parity.mjs before` → deploy → `after` → `diff`. It probes every branch on
+the shared database with a real anonymous token and fails if any branch belonging to another
+game changed behaviour. The canonical file is the one in **SatisFarm** and **Ducks**, which
+were byte-identical to live; Mecca Chameleon and Voidworks target different projects and are
+not part of this set. Confirm what is actually live first with:
+
+```
+firebase database:get /.settings/rules --pretty
+```
