@@ -1,7 +1,7 @@
 {
   "project": "REFRACT",
   "tagline": "Steering and dispersing light. Built against a reference, round by round.",
-  "updated": "2026-08-23T10:13:32.496038Z",
+  "updated": "2026-08-24T14:57:31.441765Z",
   "verdictLegend": {
     "reference": "The blind critic picked the reference as the polished commercial game. We lost the round.",
     "ours": "The blind critic picked ours as the polished commercial game. We won the round.",
@@ -158,6 +158,20 @@
         {
           "src": "web/r4-dispersion-final.jpg",
           "caption": "Pooled tracer, rendering intact"
+        }
+      ]
+    },
+    {
+      "n": 8,
+      "title": "Round 5 \u2014 solo, and mostly learning what not to touch",
+      "status": "done",
+      "verdict": "pending",
+      "summary": "Subagent spawning broke at the environment level \u2014 every spawn resolved to a model this account cannot reach, and the override was ignored \u2014 so this round ran solo. The prism finally reads as glass: measured with a with/without capture pair to isolate the glass from the light inside it, its body sat +114/255 over its own local ground where the reference measures +8 to +14, with a green-biased RGB delta. A 21x lit multiplier and a tint leaning toward the fan's mid-band (green, the least saturated part of a real spectrum) were the causes. Now +15.0 with green and blue balanced. Capture crops now centre on the subject they are named for, after a fixed rectangle went stale twice and silently blinded a critic. TERMINUS lost its two spare mirrors.",
+      "gap": "The real finding is about me, not the game. I made four confident visual claims this round and measurement contradicted all four: the beam grain was four times too weak, not too strong; the fan's chroma already matches the reference; the receptor glow is tighter than the reference, and the tail I measured was the dispersion fan; the phone layout was already balanced to within 2 px by design. Twice the answer was in a comment attached to the very constant I was about to change. Salience is a fine detector and a terrible instrument, so eye-based claims no longer go into briefs.",
+      "shots": [
+        {
+          "src": "web/r5-prism-glass.jpg",
+          "caption": "The prism as glass \u2014 outline and interior light, no filled triangle"
         }
       ]
     }
