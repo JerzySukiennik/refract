@@ -30,6 +30,7 @@ import {
   isTraceDirty,
   applyRemote,
   reset,
+  flushPersist,
 } from './state.js';
 
 // Post-process parameters. The grouped form is authoritative; the pipeline's own defaults
@@ -508,8 +509,13 @@ function boot() {
 
   document.addEventListener('visibilitychange', () => {
     state.paused = document.hidden;
+    // Progress writes are coalesced, so a tab hidden or closed inside that window would lose
+    // the last change. pagehide is the one that fires reliably on iOS Safari, where 'unload'
+    // does not; visibilitychange covers a tab simply being switched away from.
+    if (document.hidden) call(flushPersist);
     if (!document.hidden) last = performance.now() / 1000;
   });
+  window.addEventListener('pagehide', () => call(flushPersist));
 
   canvas.addEventListener('webglcontextlost', (ev) => {
     ev.preventDefault();

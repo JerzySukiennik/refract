@@ -432,6 +432,34 @@ export function setPlayerName(name) {
   changed('me', state.me);
 }
 
+// Writing straight through on every change would hit localStorage on every frame of a drag,
+// so writes are coalesced -- but a coalesced write that never happens is lost progress. See
+// flushPersist below, which is wired to pagehide: closing the tab within 250 ms of finishing
+// a level used to throw that level away.
+function writeNow() {
+  persistTimer = 0;
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        v: STORAGE_VERSION,
+        completed: state.progress.completed,
+        lastLevel: state.progress.lastLevel,
+        sound: state.sound,
+        name: state.me.name,
+      })
+    );
+  } catch (err) {
+    void err;
+  }
+}
+
+export function flushPersist() {
+  if (!persistTimer) return;
+  clearTimeout(persistTimer);
+  writeNow();
+}
+
 function persist() {
   if (persistTimer) return;
   persistTimer = setTimeout(() => {
