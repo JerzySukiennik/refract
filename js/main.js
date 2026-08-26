@@ -252,8 +252,21 @@ function boot() {
 
   let room = null;
 
+  // Set while a remote op is being applied, so echoing it straight back is impossible.
+  // Level sync in particular would loop forever without this: applyRemote calls setLevel,
+  // which emits 'level', which would broadcast the level we were just told about.
+  let applyingRemote = false;
+
   function broadcast(op) {
+    if (applyingRemote) return;
     if (room && state.mode === 'multi') room.broadcast(op);
+  }
+
+  function fromRemote(fn) {
+    return (...args) => {
+      applyingRemote = true;
+      try { fn(...args); } finally { applyingRemote = false; }
+    };
   }
 
   let lastLit = new Set();
@@ -400,6 +413,15 @@ function boot() {
     await startMultiplayer(req && req.roomId, req && req.name);
   });
   on('level:request', (index) => setLevel(index));
+  // Co-op means one board. Nothing was telling the room which level we moved to, so one
+  // player could pick level 5 while the other stayed on level 1, both drawing from the same
+  // shared piece budget and neither able to solve what the other saw.
+  on('level', () => {
+    if (applyingRemote) return;
+    if (room && state.mode === 'multi' && typeof room.setLevel === 'function') {
+      room.setLevel(state.levelIndex);
+    }
+  });
   on('net:op', (op) => applyRemote(op));
   on('net:players', (players) => {
     // player_join.ogg was another sample nothing could ever reach. The first roster sync is
@@ -428,26 +450,46 @@ function boot() {
       // The roster arrives as a Map keyed by uid. Our own seat is dropped: the local cursor
       // is drawn from live pointer state, and echoing it back would render a second, laggy
       // copy of our own pointer a few frames behind the real one.
-      room.on('players', (map) => {
+      room.on('players', fromRemote((map) => {
         const roster = {};
         for (const [uid, p] of map) {
           if (uid === room.uid) continue;
           roster[uid] = { id: uid, name: p.name, color: p.color, x: p.x, y: p.y };
         }
         setPlayers(roster);
-      });
+      }));
 
       // 'update' covers both arrival and movement: applyRemote pushes the optic when it has
       // not seen the id before, and mutates it in place when it has. net.js has already
       // filtered out our own ops, so this cannot echo.
-      const applyOptic = (o) => applyRemote({
-        type: 'update',
-        optic: { id: o.id, type: o.type, x: o.x, y: o.y, angle: o.angle, owner: o.claim || null },
+      // A removed optic is a TOMBSTONE in the room, not an absence: net.js keeps {d:true} so
+      // a stale in-flight move cannot resurrect a piece the owner already deleted. That means
+      // every consumer has to honour `removed`. Not doing so was a real bug -- the snapshot
+      // that follows a deletion re-applied the tombstone as an ordinary optic, so a removed
+      // piece came straight back on BOTH clients, including the one that removed it.
+      const applyOptic = fromRemote((o) => {
+        if (o.removed) { applyRemote({ type: 'remove', id: o.id }); return; }
+        applyRemote({
+          type: 'update',
+          optic: { id: o.id, type: o.type, x: o.x, y: o.y, angle: o.angle, owner: o.claim || null },
+        });
       });
       room.on('optic', applyOptic);
       room.on('optics', (all) => { for (const o of all.values()) applyOptic(o); });
-      room.on('optic-remove', ({ id: opticId }) => applyRemote({ type: 'remove', id: opticId }));
-      room.on('level', (index) => applyRemote({ type: 'level', index }));
+      room.on('optic-remove', fromRemote(({ id: opticId }) => applyRemote({ type: 'remove', id: opticId })));
+      // net.js emits {index, initial}, not a bare number. Treating it as a number fed an
+      // object into setLevel, which is why a level change never stuck: picking level 8 snapped
+      // straight back. `initial` is the room's level at the moment we joined -- adopt it, so a
+      // player arriving lands on whatever board the room is already playing.
+      room.on('level', fromRemote(({ index }) => {
+        if (!Number.isInteger(index) || index === state.levelIndex) return;
+        applyRemote({ type: 'level', index });
+        // Changing level clears the board, and on JOIN the optics snapshot usually arrives
+        // BEFORE the room's level does -- so adopting the level wiped the pieces a joiner had
+        // just been sent, and a player rejoining a game in progress landed on an empty board.
+        // Re-apply whatever the room currently holds, after the level has settled.
+        if (room && room.optics) for (const o of room.optics.values()) applyOptic(o);
+      }));
       room.on('status', (s) => emit('net:status', s));
     }
 
